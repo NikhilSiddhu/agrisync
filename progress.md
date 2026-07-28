@@ -5,11 +5,11 @@ Tick these off as the manual's stages pass. Do not skip ahead.
 ## Stage A - Board A on the bench
 - [x] Pi 5 on NVMe, booted and reachable over SSH
 - [x] MongoDB running in Docker, `ping: ok 1`
-- [ ] Repo cloned on the Pi, venv created, requirements installed
-- [ ] `.env` filled in with MONGO_URI and DEVICE_API_KEY
-- [ ] `curl localhost:5000/health` returns ok
-- [ ] `curl localhost:5000/health/db` returns ok
-- [ ] `curl http://<pi-ip>:5000/health` works FROM THE LAPTOP (proves 0.0.0.0 binding)
+- [x] Repo cloned on the Pi, venv created, requirements installed
+- [x] `.env` filled in with MONGO_URI and DEVICE_API_KEY
+- [x] `curl localhost:5000/health` returns ok
+- [x] `curl localhost:5000/health/db` returns ok
+- [x] `curl http://<pi-ip>:5000/health` works FROM THE LAPTOP (proves 0.0.0.0 binding)
 - [ ] BME280 wired to Board A (3V3 / GND / GPIO21 / GPIO22)
 - [ ] Board A flashed, serial shows `BME280 OK`
 - [ ] Serial shows repeating `HTTP 200`
