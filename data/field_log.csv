@@ -1,0 +1,2 @@
+device_id,date,stage,observation,notes
+esp32-smoke-01,2026-08-15,transplant,healthy,example row - delete this once you log a real visit

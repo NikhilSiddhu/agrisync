@@ -1,0 +1,19 @@
+# Runs the device health check. Paired with agrisync-watchdog.timer.
+#
+# Install both:
+#   sudo cp deploy/agrisync-watchdog.* /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agrisync-watchdog.timer
+#   systemctl list-timers agrisync-watchdog
+
+[Unit]
+Description=AgriSync device health check
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/AgriSync
+EnvironmentFile=/home/pi/AgriSync/.env
+ExecStart=/home/pi/AgriSync/.venv/bin/python -m scripts.check_devices
+SyslogIdentifier=agrisync-watchdog

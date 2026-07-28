@@ -1,0 +1,29 @@
+# secrets - NEVER commit
+.env
+*.pem
+*.key
+
+# python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# platformio
+.pio/
+.pioenvs/
+.piolibdeps/
+firmware/*/.vscode/
+
+# data / captures
+data/canopy/
+data/dumps/
+*.jpg
+*.jpeg
+!docs/**/*.jpg
+
+# os
+.DS_Store
+Thumbs.db

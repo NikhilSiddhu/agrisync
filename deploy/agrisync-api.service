@@ -1,0 +1,45 @@
+# AgriSync API - keeps the Flask app running across reboots and power cuts.
+#
+# Install:
+#   sudo cp deploy/agrisync-api.service /etc/systemd/system/
+#   sudo nano /etc/systemd/system/agrisync-api.service   # fix User= and paths if needed
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agrisync-api
+#   systemctl status agrisync-api
+#
+# Logs:
+#   journalctl -u agrisync-api -f
+
+[Unit]
+Description=AgriSync field API
+Documentation=https://github.com/YOURNAME/AgriSync
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/AgriSync
+EnvironmentFile=/home/pi/AgriSync/.env
+
+ExecStart=/home/pi/AgriSync/.venv/bin/gunicorn \
+    --workers 1 \
+    --bind 0.0.0.0:5000 \
+    --timeout 60 \
+    --access-logfile - \
+    --error-logfile - \
+    "main.app:create_app()"
+
+# Mongo may not be ready the instant the network is. Keep retrying rather
+# than giving up, which is what you want on a box that reboots after a
+# power cut with nobody there to restart it.
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agrisync-api
+
+[Install]
+WantedBy=multi-user.target
