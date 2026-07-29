@@ -216,10 +216,10 @@ void connectWiFi() {
 void syncClock() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
+  configTime(0, 0, PI_HOST, "pool.ntp.org", "time.google.com");
   Serial.print("[time] syncing");
 
-  for (int i = 0; i < 20; i++) {
+  for (int i = 0; i < 40; i++) {
     time_t now = time(nullptr);
     if (now > 1700000000) {  // sometime after Nov 2023, so clearly real
       clockSynced = true;
