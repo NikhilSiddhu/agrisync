@@ -10,10 +10,10 @@ Tick these off as the manual's stages pass. Do not skip ahead.
 - [x] `curl localhost:5000/health` returns ok
 - [x] `curl localhost:5000/health/db` returns ok
 - [x] `curl http://<pi-ip>:5000/health` works FROM THE LAPTOP (proves 0.0.0.0 binding)
-- [ ] BME280 wired to Board A (3V3 / GND / GPIO21 / GPIO22)
-- [ ] Board A flashed, serial shows `BME280 OK`
-- [ ] Serial shows repeating `HTTP 200`
-- [ ] `GET /api/v1/sensors/readings` returns a real row
+- [x] BME280 wired to Board A (3V3 / GND / GPIO21 / GPIO22)
+- [x] Board A flashed, serial shows `BME280 OK`
+- [x] Serial shows repeating `HTTP 200`
+- [x] `GET /api/v1/sensors/readings` returns a real row
 
 ## Hardening before the field (do NOT skip)
 - [ ] systemd service installed, API survives a reboot
