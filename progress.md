@@ -16,10 +16,10 @@ Tick these off as the manual's stages pass. Do not skip ahead.
 - [x] `GET /api/v1/sensors/readings` returns a real row
 
 ## Hardening before the field (do NOT skip)
-- [ ] systemd service installed, API survives a reboot
+- [x] systemd service installed, API survives a reboot
 - [ ] Pi clock synced, RTC battery fitted (`timedatectl`, `hwclock -r`)
 - [ ] Watchdog timer running, test alert received on your phone
-- [ ] Nightly backup in crontab, first backup file confirmed on disk
+- [x] Nightly backup in crontab, first backup file confirmed on disk
 - [ ] Firmware buffering tested: unplug the router, confirm readings backfill
 - [ ] LED fault codes verified (pull a sensor, count the blinks)
 
