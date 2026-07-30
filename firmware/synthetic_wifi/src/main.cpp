@@ -51,6 +51,14 @@
 #include <LittleFS.h>
 #include <time.h>
 
+// Set -DUSE_WIFI_POST=0 to run tethered: the board prints readings to serial
+// and scripts/serial_bridge.py on the Pi forwards them. No WiFi, no NTP, no
+// buffering, no failed POSTs. The USB cable that already powers the board is a
+// far more reliable path on the bench than wireless client-to-client bridging.
+#ifndef USE_WIFI_POST
+#define USE_WIFI_POST 1
+#endif
+
 #include <Adafruit_BME280.h>
 #include <Adafruit_MLX90614.h>
 #include <Adafruit_ADS1X15.h>
@@ -187,10 +195,14 @@ void serviceStatusLed() {
 }
 
 void updateFault() {
+#if USE_WIFI_POST
   if (WiFi.status() != WL_CONNECTED)              currentFault = FAULT_WIFI;
   else if (!haveBME || !haveMLX || !haveADS)      currentFault = FAULT_SENSOR;
   else if (!clockSynced)                          currentFault = FAULT_CLOCK;
   else                                            currentFault = FAULT_NONE;
+#else
+  currentFault = (!haveBME || !haveMLX || !haveADS) ? FAULT_SENSOR : FAULT_NONE;
+#endif
 }
 
 // ============================ wifi + time ============================
@@ -436,12 +448,19 @@ void setup() {
   }
 
   setupSensors();
+
+#if USE_WIFI_POST
   connectWiFi();
   syncClock();
   updateFault();
-
   // Let the IP stack settle before loop() fires its first POST.
   delay(BOOT_SETTLE_MS);
+#else
+  Serial.println("[mode] SERIAL ONLY - radio off, Pi stamps the timestamps");
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  currentFault = (haveBME && haveADS) ? FAULT_NONE : FAULT_SENSOR;
+#endif
 }
 
 void loop() {
@@ -453,8 +472,10 @@ void loop() {
   }
   lastPost = millis();
 
+#if USE_WIFI_POST
   connectWiFi();
   if (!clockSynced) syncClock();
+#endif
 
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
@@ -510,12 +531,21 @@ void loop() {
   doc["battery_v"] = (raw / 4095.0f) * 3.3f * ((47.0f + 10.0f) / 10.0f);
 #endif
 
+#if USE_WIFI_POST
   doc["rssi"]            = WiFi.RSSI();
   doc["buffered_count"]  = bufferedCount();
+#endif
 
   String body;
   serializeJson(doc, body);
   Serial.printf("[payload] %s\n", body.c_str());
+
+#if !USE_WIFI_POST
+  // Tethered. The line above is the delivery mechanism - the bridge on the Pi
+  // reads it. Nothing to retry, nothing to buffer.
+  updateFault();
+  return;
+#endif
 
   // Retry before giving up. The first POST after boot fails almost every time:
   // the network stack has not settled after a long blocking NTP sync, and the

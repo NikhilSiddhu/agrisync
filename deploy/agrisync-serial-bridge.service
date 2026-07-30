@@ -1,0 +1,39 @@
+# Forwards readings from the ESP32 over USB serial to the local API.
+#
+# Install:
+#   cd ~/agrisync
+#   sed -e "s|User=pi|User=$USER|" -e "s|/home/pi/AgriSync|$PWD|g" \
+#       deploy/agrisync-serial-bridge.service | sudo tee /etc/systemd/system/agrisync-serial-bridge.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agrisync-serial-bridge
+#
+# Watch it (this replaces `pio device monitor`):
+#   journalctl -u agrisync-serial-bridge -f
+#
+# Before flashing, stop it or the upload cannot open the port:
+#   sudo systemctl stop agrisync-serial-bridge
+
+[Unit]
+Description=AgriSync USB serial bridge
+After=agrisync-api.service
+Wants=agrisync-api.service
+
+[Service]
+Type=simple
+User=pi
+Group=dialout
+WorkingDirectory=/home/pi/AgriSync
+EnvironmentFile=/home/pi/AgriSync/.env
+ExecStart=/home/pi/AgriSync/.venv/bin/python -m scripts.serial_bridge
+
+# The board gets unplugged, the port vanishes, someone runs the monitor.
+# Always come back.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agrisync-bridge
+
+[Install]
+WantedBy=multi-user.target

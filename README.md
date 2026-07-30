@@ -49,6 +49,7 @@ src/validation.py            plausibility checks, quality flags
 src/health_check.py          device health assessment
 src/api/devices.py           GET /api/v1/devices
 scripts/check_devices.py     cron watchdog with alerting
+scripts/serial_bridge.py     USB serial -> API, for bench use
 deploy/                      systemd units, see deploy/README.md
 src/ml/physics_baseline.py   disease infection pressure models
 src/weather/forecast.py      Open-Meteo forecast fetch (no API key needed)
@@ -104,8 +105,36 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-47 tests, no hardware and no database needed. They check the dew point math, the
+60 tests, no hardware and no database needed. They check the dew point math, the
 disease model shape, and every API route including auth rejection.
+
+## Bench mode: USB instead of WiFi
+
+The board is powered from the Pi's USB anyway. On the bench that cable is a far
+more reliable path than WiFi, and WiFi never ships — the field box runs on 4G
+through the tunnel.
+
+Flash with `-DUSE_WIFI_POST=0` in `platformio.ini`, then run the bridge:
+
+```bash
+sudo systemctl start agrisync-serial-bridge
+journalctl -u agrisync-serial-bridge -f
+```
+
+The board prints each reading to serial, the bridge forwards it to the API. No
+radio, no NTP, no buffering, no failed POSTs. The Pi stamps the timestamps, which
+is accurate to within a second on a live serial link.
+
+The journal shows every line the board prints, so it replaces `pio device
+monitor`. Only one process can hold a serial port — stop the service before
+flashing:
+
+```bash
+sudo systemctl stop agrisync-serial-bridge
+```
+
+Set `USE_WIFI_POST` back to 1, or switch to the A7670C, before the box leaves
+your desk.
 
 ## Looking at your data
 
