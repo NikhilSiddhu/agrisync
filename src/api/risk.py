@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify
 
+from src.auth import require_read_key
 from src.db import get_db
 from src.ml.physics_baseline import DISEASES, evaluate_all, wet_hours_from_readings
 from src.ml.wetness import dew_point_c, leaf_wetness_index
@@ -21,6 +22,7 @@ MEASURED_WINDOW_HOURS = 24
 
 
 @bp.get("/<device_id>")
+@require_read_key
 def risk(device_id):
     # --- measured side: what the box actually saw ---
     since = datetime.now(timezone.utc) - timedelta(hours=MEASURED_WINDOW_HOURS)

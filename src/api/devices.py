@@ -7,6 +7,7 @@ Read only, no auth. Bookmark it on your phone.
 """
 from flask import Blueprint, jsonify, request
 
+from src.auth import require_read_key
 from src.db import get_db
 from src.health_check import SEVERITY, STATUS_OK, assess_all, assess_device
 
@@ -15,6 +16,7 @@ bp = Blueprint("devices", __name__, url_prefix="/api/v1/devices")
 
 @bp.get("")
 @bp.get("/")
+@require_read_key
 def list_devices():
     try:
         window = min(int(request.args.get("window_hours", 6)), 168)
@@ -35,6 +37,7 @@ def list_devices():
 
 
 @bp.get("/<device_id>")
+@require_read_key
 def device_detail(device_id):
     try:
         window = min(int(request.args.get("window_hours", 6)), 168)

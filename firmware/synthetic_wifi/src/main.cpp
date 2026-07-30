@@ -66,6 +66,9 @@ static const int PIN_STATUS_LED = 2;
 // ---------- timing ----------
 static const unsigned long POST_INTERVAL_MS = 60UL * 1000UL;
 static const unsigned long WIFI_TIMEOUT_MS  = 20UL * 1000UL;
+static const int  POST_RETRIES        = 3;
+static const int  POST_RETRY_DELAY_MS = 2500;
+static const unsigned long BOOT_SETTLE_MS = 3000;
 
 // ---------- buffer ----------
 static const char *BUFFER_PATH = "/buf.jsonl";
@@ -206,6 +209,11 @@ void connectWiFi() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    // Modem sleep parks the radio between transmissions to save power, but it
+    // costs 20-25% packet loss and latency spikes to 400ms+. That showed up as
+    // failed POSTs and NTP timeouts that looked like firewall problems.
+    // Roughly 3.6 Wh/day extra out of a ~40 Wh/day solar budget. Worth it.
+    WiFi.setSleep(false);
     Serial.printf("[wifi] connected, ip %s rssi %d\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
   } else {
@@ -216,8 +224,11 @@ void connectWiFi() {
 void syncClock() {
   if (WiFi.status() != WL_CONNECTED) return;
 
+  // The Pi first. It is on the same LAN, needs no DNS, and works with the
+  // internet down - which is the whole point for a field box. Public servers
+  // are the fallback, and many home routers block or intercept them anyway.
   configTime(0, 0, PI_HOST, "pool.ntp.org", "time.google.com");
-  Serial.print("[time] syncing");
+  Serial.printf("[time] syncing via %s", PI_HOST);
 
   for (int i = 0; i < 40; i++) {
     time_t now = time(nullptr);
@@ -230,6 +241,8 @@ void syncClock() {
     delay(500);
   }
   Serial.println(" FAILED - timestamps will fall back to the server's clock");
+  Serial.println("  -> is chrony running on the Pi and allowing your subnet?");
+  Serial.println("     sudo systemctl status chrony ; chronyc clients");
 }
 
 // ============================ i2c ============================
@@ -426,6 +439,9 @@ void setup() {
   connectWiFi();
   syncClock();
   updateFault();
+
+  // Let the IP stack settle before loop() fires its first POST.
+  delay(BOOT_SETTLE_MS);
 }
 
 void loop() {
@@ -501,7 +517,18 @@ void loop() {
   serializeJson(doc, body);
   Serial.printf("[payload] %s\n", body.c_str());
 
+  // Retry before giving up. The first POST after boot fails almost every time:
+  // the network stack has not settled after a long blocking NTP sync, and the
+  // radio may still be waking. Buffering it works, but it produced an alarming
+  // error on every single boot that repeatedly looked like a server problem.
   bool ok = postBody(body, false);
+  for (int attempt = 1; !ok && attempt <= POST_RETRIES; attempt++) {
+    Serial.printf("[post] retry %d of %d in %d ms\n",
+                  attempt, POST_RETRIES, POST_RETRY_DELAY_MS);
+    delay(POST_RETRY_DELAY_MS);
+    ok = postBody(body, false);
+  }
+
   if (!ok) {
     bufferReading(body);
     currentFault = FAULT_API;

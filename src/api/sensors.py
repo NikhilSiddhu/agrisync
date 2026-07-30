@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, current_app, jsonify, request
 
-from src.auth import require_device_key
+from src.auth import require_device_key, require_read_key
 from src.db import get_db
 from src.ml.leaf_temp import leaf_temp_from_reading
 from src.ml.wetness import dew_point_c, leaf_wetness_index
@@ -150,6 +150,7 @@ def _resolve_timestamp(sampled_at, now):
 
 
 @bp.get("/readings")
+@require_read_key
 def get_readings():
     """Most recent readings. ?device_id= ?limit= ?clean=1 all optional.
 

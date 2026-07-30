@@ -17,15 +17,15 @@ Tick these off as the manual's stages pass. Do not skip ahead.
 
 ## Hardening before the field (do NOT skip)
 - [x] systemd service installed, API survives a reboot
-- [ ] Pi clock synced, RTC battery fitted (`timedatectl`, `hwclock -r`)
-- [ ] Watchdog timer running, test alert received on your phone
+- [x] Pi clock synced, RTC battery fitted (`timedatectl`, `hwclock -r`)
+- [x] Watchdog timer running, test alert received on your phone
 - [x] Nightly backup in crontab, first backup file confirmed on disk
-- [ ] Firmware buffering tested: unplug the router, confirm readings backfill
+- [x] Firmware buffering tested: unplug the router, confirm readings backfill
 - [ ] LED fault codes verified (pull a sensor, count the blinks)
 
 ## Stage B - full I2C bus
 - [ ] MLX90614 added, serial shows `MLX90614 OK @ 0x5A`
-- [ ] ADS1115 added, serial shows `ADS1115 OK @ 0x48`
+- [x] ADS1115 added, serial shows `ADS1115 OK @ 0x48`
 - [ ] `leaf_wetness` appears in the JSON payload
 - [ ] Raindrop module on GPIO35 / GPIO32
 - [ ] (optional) SGP40 on 0x59

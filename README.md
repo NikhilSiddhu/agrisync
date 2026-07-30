@@ -104,8 +104,42 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-38 tests, no hardware and no database needed. They check the dew point math, the
+47 tests, no hardware and no database needed. They check the dew point math, the
 disease model shape, and every API route including auth rejection.
+
+## Looking at your data
+
+```bash
+python -m scripts.export_readings --summary-only     # quality report, writes nothing
+python -m scripts.export_readings                    # two CSVs
+python -m scripts.export_readings --days 7 --xlsx    # last week, plus a spreadsheet
+```
+
+Two files come out, because inspecting data and modelling data want different
+shapes:
+
+| File | What it is | Use it for |
+|---|---|---|
+| `readings_raw_*.csv` | one row per reading, exactly as recorded | the archive, never edit it |
+| `readings_hourly_*.csv` | one row per hour, aggregated | **modelling and plotting** |
+
+The hourly table is the one that matters. Disease models count **wet hours**, not
+wet readings, so the per-minute data has to be collapsed to hours before any of it
+means anything. It carries `wet_minutes`, `is_wet_hour`, hourly temperature mean,
+min and max, and `local_hour` in IST so you can reason about "last night" without
+doing UTC arithmetic in your head.
+
+`--xlsx` adds a workbook with three sheets: the quality report, the hourly table,
+and the raw readings, with filters and frozen headers.
+
+### The quality report is the point
+
+It tells you coverage percentage, the longest gap, how many rows failed
+plausibility checks, and how many hours have enough readings to be trustworthy.
+
+Check it before you fit anything. A model trained on data with an unnoticed
+three-hour hole produces confident nonsense, and gaps are invisible until you go
+looking for them.
 
 ## Risk readout
 
@@ -124,10 +158,14 @@ Prints the infection pressure table across temperature and wet hours.
 | GET | `/health` | none | is Flask alive |
 | GET | `/health/db` | none | can Flask reach Mongo |
 | POST | `/api/v1/sensors/readings` | `X-API-Key` | the ESP32 posts here |
-| GET | `/api/v1/sensors/readings` | none | recent rows, `?device_id=` `?limit=` |
-| GET | `/api/v1/risk/<device_id>` | none | infection pressure curve |
-| GET | `/api/v1/devices` | none | health of every device |
-| GET | `/api/v1/devices/<id>` | none | one device in detail |
+| GET | `/api/v1/sensors/readings` | `X-Read-Key`* | recent rows, `?device_id=` `?limit=` |
+| GET | `/api/v1/risk/<device_id>` | `X-Read-Key`* | infection pressure curve |
+| GET | `/api/v1/devices` | `X-Read-Key`* | health of every device |
+| GET | `/api/v1/devices/<id>` | `X-Read-Key`* | one device in detail |
+
+\* Read endpoints are open until you set `READ_API_KEY` in `.env`. `/health`
+and `/health/db` are always open so monitoring works without credentials.
+See `docs/SECURITY.md`.
 
 Test a POST by hand before you flash anything:
 
@@ -211,3 +249,14 @@ during a wet night costs you nothing. Check the queue depth in any payload:
 | 2 blinks | a core sensor is missing from the I2C bus |
 | 3 blinks | cannot reach the API, readings are buffering |
 | 4 blinks | clock never synced, timestamps unreliable |
+
+
+## Security
+
+`docs/SECURITY.md` covers SSH keys, firewall, automatic updates, key rotation,
+and setting up a Cloudflare Tunnel with Access service tokens for when the box
+moves out of WiFi range and onto 4G.
+
+Short version of the threat that matters: someone injecting fake readings would
+poison your dataset silently and permanently. Protecting writes is worth real
+effort. Protecting reads is not, until the API leaves your LAN.

@@ -1,0 +1,39 @@
+AgriSync security update
+========================
+
+Unzip this over your repo on the Pi:
+
+    cd ~/agrisync
+    unzip -o ~/agrisync_security.zip
+    sudo systemctl restart agrisync-api
+    pytest -q          # expect 47 passed
+
+NEW FILE
+  docs/SECURITY.md            hardening guide: SSH keys, ufw, fail2ban,
+                              key rotation, Cloudflare Tunnel + Access
+
+CHANGED
+  src/auth.py                 rewritten. Adds require_read_key (optional read
+                              auth) alongside the existing device write key.
+  src/config.py               + READ_API_KEY, BIND_HOST, MAX_CONTENT_LENGTH
+  main/app.py                 + security headers, honours BIND_HOST
+  src/api/sensors.py          GET /readings now behind require_read_key
+  src/api/risk.py             GET /risk/<id> now behind require_read_key
+  src/api/devices.py          both device endpoints behind require_read_key
+  tests/test_api.py           38 -> 47 tests
+  .env.example                + READ_API_KEY, BIND_HOST
+  README.md                   endpoint table + security section
+
+UNTOUCHED
+  everything else, including all firmware, deploy/, scripts/, src/ml/,
+  src/validation.py, src/health_check.py, src/db.py, src/weather/
+
+NOTHING BREAKS BY DEFAULT
+  READ_API_KEY is empty in .env until you set it, so every GET keeps working
+  exactly as it does today. BIND_HOST defaults to 0.0.0.0, so the ESP32 keeps
+  reaching the API over WiFi.
+
+DO THESE TWO FIRST (section 1 and 5 of SECURITY.md)
+  1. SSH keys, then turn off password auth. This is the real risk.
+  2. Rotate DEVICE_API_KEY. Yours has been in shell history and in chat.
+     Reflash the board with the new one or every POST returns 401.

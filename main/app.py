@@ -58,6 +58,17 @@ def create_app(config_object=Config):
             ],
         })
 
+    @app.after_request
+    def security_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers.pop("Server", None)
+        return response
+
+    if not app.config.get("READ_API_KEY"):
+        app.logger.info("READ_API_KEY not set - GET endpoints are open on this network")
+
     if not app.config.get("DEVICE_API_KEY") or app.config["DEVICE_API_KEY"].startswith("change-me"):
         app.logger.warning(
             "DEVICE_API_KEY is not set in .env - every device POST will fail"
@@ -70,4 +81,8 @@ if __name__ == "__main__":
     application = create_app()
     # host 0.0.0.0 is REQUIRED. On 127.0.0.1 the ESP32 cannot reach the Pi
     # over WiFi and you get a board that flashes fine and never reports.
-    application.run(host="0.0.0.0", port=application.config["FLASK_PORT"], debug=True)
+    application.run(
+        host=application.config["BIND_HOST"],
+        port=application.config["FLASK_PORT"],
+        debug=True,
+    )

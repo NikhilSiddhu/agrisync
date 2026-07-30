@@ -378,3 +378,89 @@ def test_raw_is_always_kept_so_correction_can_be_redone(client):
     )
     row = client.get("/api/v1/sensors/readings").get_json()["readings"][0]
     assert "leaf_temp_raw_c" in row
+
+
+# --- read authentication ---
+
+def _app_with_read_key(monkeypatch, read_key):
+    import mongomock
+    from src import db as db_module
+    fake_client = mongomock.MongoClient()
+    fake_db = fake_client["agrisync_test"]
+    monkeypatch.setattr(db_module, "_client", fake_client)
+    monkeypatch.setattr(db_module, "_db", fake_db)
+    monkeypatch.setattr(db_module, "init_db", lambda app: None)
+    from main.app import create_app
+
+    class C:
+        MONGO_URI = "mongodb://fake"
+        DEVICE_API_KEY = TEST_KEY
+        READ_API_KEY = read_key
+        BIND_HOST = "127.0.0.1"
+        SITE_NAME = "Hapur"; SITE_LAT = 28.717; SITE_LON = 77.774
+        SITE_TZ = "Asia/Kolkata"; FLASK_PORT = 5000; TESTING = True
+
+    app = create_app(C)
+    monkeypatch.setattr(db_module, "_db", fake_db)
+    return app.test_client()
+
+
+def test_reads_open_when_no_read_key(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "")
+    assert c.get("/api/v1/sensors/readings").status_code == 200
+    assert c.get("/api/v1/devices").status_code in (200, 207)
+
+
+def test_reads_blocked_without_key_when_set(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    assert c.get("/api/v1/sensors/readings").status_code == 401
+    assert c.get("/api/v1/devices").status_code == 401
+    assert c.get("/api/v1/risk/esp32-smoke-01").status_code == 401
+
+
+def test_reads_allowed_with_header(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    r = c.get("/api/v1/sensors/readings", headers={"X-Read-Key": "read-secret"})
+    assert r.status_code == 200
+
+
+def test_reads_allowed_with_query_param(monkeypatch):
+    """So you can open it in a phone browser."""
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    assert c.get("/api/v1/sensors/readings?key=read-secret").status_code == 200
+
+
+def test_wrong_read_key_rejected(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    r = c.get("/api/v1/sensors/readings", headers={"X-Read-Key": "nope"})
+    assert r.status_code == 401
+
+
+def test_health_stays_open_for_monitoring(monkeypatch):
+    """Monitoring must work without credentials."""
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    assert c.get("/health").status_code == 200
+
+
+def test_device_post_unaffected_by_read_key(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    r = c.post("/api/v1/sensors/readings",
+               json={"device_id": "d", "air_temp_c": 22.0},
+               headers={"X-API-Key": TEST_KEY})
+    assert r.status_code == 201
+
+
+def test_read_key_does_not_open_writes(monkeypatch):
+    """The read key must never be accepted as a write credential."""
+    c = _app_with_read_key(monkeypatch, "read-secret")
+    r = c.post("/api/v1/sensors/readings",
+               json={"device_id": "d"},
+               headers={"X-API-Key": "read-secret"})
+    assert r.status_code == 401
+
+
+def test_security_headers_present(monkeypatch):
+    c = _app_with_read_key(monkeypatch, "")
+    h = c.get("/health").headers
+    assert h["X-Content-Type-Options"] == "nosniff"
+    assert h["X-Frame-Options"] == "DENY"
