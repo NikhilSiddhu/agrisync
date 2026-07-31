@@ -27,3 +27,10 @@ class Config:
     SITE_TZ = os.getenv("SITE_TZ", "Asia/Kolkata")
 
     FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
+
+    # Cloudflare Access. Needed to verify who is signed in. Without both of
+    # these, identity is unavailable and everyone is treated as anonymous —
+    # which is the safe direction to fail in.
+    CF_ACCESS_TEAM_DOMAIN = os.getenv("CF_ACCESS_TEAM_DOMAIN", "")
+    CF_ACCESS_AUD = os.getenv("CF_ACCESS_AUD", "")
+    ADMIN_EMAILS = os.getenv("ADMIN_EMAILS", "")

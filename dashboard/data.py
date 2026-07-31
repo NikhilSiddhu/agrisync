@@ -8,10 +8,16 @@ Everything returned here is safe to publish. No API keys, no device tokens,
 no internal IPs, no firmware paths.
 """
 import os
+import sys
 from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from datetime import datetime, timedelta, timezone
 
 from pymongo import MongoClient
+
+from src.bucketing import bucket_minutes_for, bucketed
 
 WET_THRESHOLD = 50.0
 STALE_MINUTES = int(os.getenv("DASH_STALE_MINUTES", "30"))
@@ -98,48 +104,20 @@ def latest():
 
 
 def series(hours=MAX_PUBLIC_HOURS):
-    """Hourly means for the charts. Suspect rows are excluded, never averaged in."""
+    """Grouped in the database. The cap is applied here, before the query is
+    built, which is why src/bucketing.py never needs to know about it."""
     hours = clamp(hours)
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    rows = list(
-        _db().readings.find(
-            {"ts": {"$gte": since}, "quality_flags": {"$exists": False}},
-            {"ts": 1, "air_temp_c": 1, "humidity_pct": 1, "dew_point_c": 1,
-             "leaf_temp_c": 1, "leaf_wetness": 1, "_id": 0},
-        ).sort("ts", 1)
-    )
+    query = {"ts": {"$gte": datetime.now(timezone.utc) - timedelta(hours=hours)},
+             "quality_flags": {"$exists": False}}
 
-    buckets = defaultdict(list)
-    for r in rows:
-        ts = r.get("ts")
-        if ts is None:
-            continue
-        # Hourly points for a day, but 7 days of hourly is 168 points of mush
-        # on a phone. Bucket to 6 hours once the window is longer than 2 days.
-        if hours > 48:
-            local_h = _local(ts)
-            slot = local_h.replace(hour=(local_h.hour // 6) * 6,
-                                   minute=0, second=0, microsecond=0)
-            buckets[slot].append(r)
-        else:
-            buckets[ts.replace(minute=0, second=0, microsecond=0)].append(r)
-
-    def avg(items, key):
-        vals = [i[key] for i in items if i.get(key) is not None]
-        return round(sum(vals) / len(vals), 2) if vals else None
+    minutes = bucket_minutes_for(hours)
+    fmt = "%H:%M" if hours <= 48 else "%d %b %H:%M"
 
     out = {"labels": [], "air": [], "humidity": [], "dew": [], "leaf": [], "wetness": []}
-    for hour in sorted(buckets):
-        items = buckets[hour]
-        local = _local(hour) if hours <= 48 else hour
-        out["labels"].append(
-            local.strftime("%H:%M") if hours <= 48 else local.strftime("%d %b %H:%M"))
-        out["air"].append(avg(items, "air_temp_c"))
-        out["humidity"].append(avg(items, "humidity_pct"))
-        out["dew"].append(avg(items, "dew_point_c"))
-        out["leaf"].append(avg(items, "leaf_temp_c"))
-        out["wetness"].append(avg(items, "leaf_wetness"))
-
+    for r in bucketed(_db().readings, query, minutes):
+        out["labels"].append(_local(r["bucket"]).strftime(fmt))
+        for key in ("air", "humidity", "dew", "leaf", "wetness"):
+            out[key].append(r[key])
     return out
 
 
@@ -193,8 +171,8 @@ def deeper_access():
     return {
         "max_days": MAX_PUBLIC_HOURS // 24,
         "api_url": API_URL,
-        "note": ("The last 7 days are public. Full history, raw readings and the "
-                 "disease risk API require a sign-in."),
+        "note": ("The last 7 days are public. The full record, the daily "
+                 "breakdown and the raw CSV are behind a sign-in."),
     }
 
 

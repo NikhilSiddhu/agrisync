@@ -2,7 +2,7 @@
 import math
 import random
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import mongomock
@@ -16,7 +16,7 @@ from dashboard import data as ddata
 def seed(db, days=7):
     """Realistic diurnal data, naive UTC exactly as pymongo returns it."""
     random.seed(3)
-    start = datetime.utcnow() - timedelta(days=days)
+    start = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     rows = []
     for m in range(days * 24 * 60):
         ts = start + timedelta(minutes=m)
@@ -152,7 +152,7 @@ def test_wet_hours_counted(db):
 
 def test_suspect_rows_excluded_from_charts(db):
     db.readings.insert_one({
-        "device_id": "esp32-smoke-01", "ts": datetime.utcnow(),
+        "device_id": "esp32-smoke-01", "ts": datetime.now(timezone.utc).replace(tzinfo=None),
         "air_temp_c": 0.0, "humidity_pct": 0.0, "pressure_hpa": 0.0,
         "quality_flags": ["i2c:all_zero"],
     })

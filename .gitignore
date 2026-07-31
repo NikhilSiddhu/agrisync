@@ -35,3 +35,14 @@ WHAT_CHANGED.txt
 WHAT_CHANGED.txt
 *.save
 exports/
+.env
+.venv/
+*.zip
+*.save
+exports/
+WHAT_CHANGED.txt
+ADMIN_LOCK.md
+SETUP_OTP.md
+__pycache__/
+*.pyc
+.pytest_cache/

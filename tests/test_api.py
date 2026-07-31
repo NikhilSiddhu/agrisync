@@ -98,7 +98,8 @@ def test_warm_strain_prefers_warmer_weather():
 # --- API ---
 
 def test_index_lists_endpoints(client):
-    resp = client.get("/")
+    """/ now negotiates: HTML for browsers, JSON for machines."""
+    resp = client.get("/", headers={"Accept": "application/json"})
     assert resp.status_code == 200
     assert "agrisync-api" in resp.get_json()["service"]
 

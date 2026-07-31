@@ -22,6 +22,7 @@ from src.api.devices import bp as devices_bp
 from src.api.health import bp as health_bp
 from src.api.risk import bp as risk_bp
 from src.api.sensors import bp as sensors_bp
+from src.api.views import bp as views_bp
 from src.config import Config
 from src.db import init_db
 
@@ -39,24 +40,9 @@ def create_app(config_object=Config):
 
     app.register_blueprint(health_bp)
     app.register_blueprint(devices_bp)
+    app.register_blueprint(views_bp)
     app.register_blueprint(sensors_bp)
     app.register_blueprint(risk_bp)
-
-    @app.get("/")
-    def index():
-        return jsonify({
-            "service": "agrisync-api",
-            "site": app.config["SITE_NAME"],
-            "endpoints": [
-                "GET  /health",
-                "GET  /health/db",
-                "POST /api/v1/sensors/readings   (needs X-API-Key header)",
-                "GET  /api/v1/sensors/readings",
-                "GET  /api/v1/risk/<device_id>",
-                "GET  /api/v1/devices",
-                "GET  /api/v1/devices/<device_id>",
-            ],
-        })
 
     @app.after_request
     def security_headers(response):
