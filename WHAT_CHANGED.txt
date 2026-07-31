@@ -1,31 +1,44 @@
-AgriSync 1.3.0 — USB serial bridge
-==================================
+AgriSync public dashboard
+=========================
 
     cd ~/agrisync
-    unzip -o ~/agrisync_serial.zip
-    source .venv/bin/activate && pip install pyserial
-    pytest -q            # expect 60 passed
+    unzip -o ~/agrisync_dashboard.zip
+    pytest -q            # expect 85 passed
 
-NEW
-  scripts/serial_bridge.py            reads [payload] lines from the ESP32 over
-                                      USB and POSTs them to the local API
-  deploy/agrisync-serial-bridge.service
-  tests/test_serial_bridge.py         11 tests, no serial port needed
+WHAT IT IS
+  dashboard/            its own Flask app on port 8080, separate from the API
+  dashboard/data.py     read-only Mongo queries, hard 7-day public cap
+  dashboard/templates/  the page, using agrisync.tech's exact design tokens
 
-CHANGED
-  firmware/.../main.cpp               USE_WIFI_POST flag. Set 0 = tethered mode:
-                                      no WiFi, no NTP, no buffering, no retries
-  firmware/.../platformio.ini         version 1.3.0, USE_WIFI_POST=1 by default
-  requirements.txt                    + pyserial
-  README.md, progress.md              docs
+WHY A SEPARATE SERVICE
+  dashboard.agrisync.tech is public. api.agrisync.tech is behind Access.
+  One process serving both hostnames would let anyone request an API path on
+  the public hostname and bypass Access. Separate port, HTML only.
 
-TO USE IT
-  1. edit platformio.ini, set -DUSE_WIFI_POST=0
-  2. reflash (exports still needed for DEVICE_API_KEY; WIFI_* are ignored)
-  3. install and start the bridge service
-  4. journalctl -u agrisync-serial-bridge -f
+INSTALL
+  cd ~/agrisync
+  sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
+      -e "s|/home/pi/AgriSync|$PWD|g" deploy/agrisync-dashboard.service \
+      | sudo tee /etc/systemd/system/agrisync-dashboard.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now agrisync-dashboard
+  curl localhost:8080/health
 
-  Stop the bridge before any reflash, or the upload cannot open the port.
+ROUTE IT
+  cloudflared tunnel route dns --overwrite-dns agrisync dashboard.agrisync.tech
+  sudo nano /etc/cloudflared/config.yml
 
-BEFORE THE BOX GOES OUTSIDE
-  Set USE_WIFI_POST back to 1, or move to the A7670C over the tunnel.
+  ingress:
+    - hostname: api.agrisync.tech
+      service: http://127.0.0.1:5000
+    - hostname: dashboard.agrisync.tech
+      service: http://127.0.0.1:8080
+    - service: http_status:404
+
+  sudo systemctl restart cloudflared
+
+  Do NOT add a Cloudflare Access application for dashboard.agrisync.tech.
+
+ON YOUR SIDE
+  Point the hero "Dashboard" button in agrisync.tech's index.html at
+  https://dashboard.agrisync.tech

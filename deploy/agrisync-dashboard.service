@@ -1,0 +1,40 @@
+# Public dashboard, port 8080. Separate from the API on 5000 on purpose:
+# this hostname has no Cloudflare Access in front of it.
+#
+# Install:
+#   cd ~/agrisync
+#   sed -e "s|User=pi|User=$USER|" -e "s|Group=pi|Group=$USER|" \
+#       -e "s|/home/pi/AgriSync|$PWD|g" deploy/agrisync-dashboard.service \
+#       | sudo tee /etc/systemd/system/agrisync-dashboard.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agrisync-dashboard
+#   curl localhost:8080/health
+
+[Unit]
+Description=AgriSync public dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/AgriSync
+EnvironmentFile=/home/pi/AgriSync/.env
+
+# Bound to loopback only. The Cloudflare tunnel is the sole way in; nothing on
+# the LAN and nothing on the internet reaches this port directly.
+ExecStart=/home/pi/AgriSync/.venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:8080 \
+    --timeout 30 \
+    --access-logfile - \
+    --error-logfile - \
+    "dashboard.app:create_app()"
+
+Restart=always
+RestartSec=10
+SyslogIdentifier=agrisync-dashboard
+
+[Install]
+WantedBy=multi-user.target

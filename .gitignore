@@ -28,3 +28,10 @@ data/dumps/
 .DS_Store
 Thumbs.db
 exports/
+*.zip
+WHAT_CHANGED.txt
+*.save
+*.zip
+WHAT_CHANGED.txt
+*.save
+exports/
