@@ -51,17 +51,42 @@
 #include <LittleFS.h>
 #include <time.h>
 
-// Set -DUSE_WIFI_POST=0 to run tethered: the board prints readings to serial
-// and scripts/serial_bridge.py on the Pi forwards them. No WiFi, no NTP, no
-// buffering, no failed POSTs. The USB cable that already powers the board is a
-// far more reliable path on the bench than wireless client-to-client bridging.
-#ifndef USE_WIFI_POST
-#define USE_WIFI_POST 1
+/* ── Transport ────────────────────────────────────────────────────────────
+   0  SERIAL  tethered to the Pi over USB. scripts/serial_bridge.py forwards.
+   1  WIFI    POST over WiFi. Bench only; will not reach the field.
+   2  CELL    A7670C over UART2, HTTPS to api.agrisync.tech through the tunnel.
+
+   Set with -DTRANSPORT=2 in platformio.ini.
+
+   In CELL mode every reading is written to flash first and only removed once
+   the server has confirmed it. A dropped connection, a dead SIM or an unpaid
+   bill costs you nothing but a delay. Roughly 26 days of storage at a
+   5-minute interval, so the box survives a fortnight of you not visiting.
+   ──────────────────────────────────────────────────────────────────────── */
+#define TRANSPORT_SERIAL 0
+#define TRANSPORT_WIFI   1
+#define TRANSPORT_CELL   2
+
+#ifndef TRANSPORT
+#define TRANSPORT TRANSPORT_SERIAL
 #endif
+
+/* Kept so older builds still work; TRANSPORT is the flag to use now. */
+#define USE_WIFI_POST (TRANSPORT == TRANSPORT_WIFI)
+#define USE_CELL      (TRANSPORT == TRANSPORT_CELL)
+#define NETWORKED     (USE_WIFI_POST || USE_CELL)
 
 #include <Adafruit_BME280.h>
 #include <Adafruit_MLX90614.h>
 #include <Adafruit_ADS1X15.h>
+
+#if USE_CELL
+#include "modem.h"
+static const int PIN_MODEM_RX = 27;   // ESP32 RX2  <- modem TXD
+static const int PIN_MODEM_TX = 26;   // ESP32 TX2  -> modem RXD
+Modem modem(Serial2, PIN_MODEM_RX, PIN_MODEM_TX, CELL_APN);
+bool cellReady = false;
+#endif
 
 // ---------- pins ----------
 static const int PIN_SDA        = 21;
@@ -72,7 +97,14 @@ static const int PIN_BATTERY    = 39;
 static const int PIN_STATUS_LED = 2;
 
 // ---------- timing ----------
+/* One a minute on the bench. Five in the field: it is plenty for wet-hour
+   accounting (12 samples an hour), and it quadruples both battery life and
+   flash capacity. */
+#if USE_CELL
+static const unsigned long POST_INTERVAL_MS = 300UL * 1000UL;
+#else
 static const unsigned long POST_INTERVAL_MS = 60UL * 1000UL;
+#endif
 static const unsigned long WIFI_TIMEOUT_MS  = 20UL * 1000UL;
 static const int  POST_RETRIES        = 3;
 static const int  POST_RETRY_DELAY_MS = 2500;
@@ -81,7 +113,11 @@ static const unsigned long BOOT_SETTLE_MS = 3000;
 // ---------- buffer ----------
 static const char *BUFFER_PATH = "/buf.jsonl";
 static const char *TEMP_PATH   = "/buf.tmp";
-static const size_t MAX_BUFFER_BYTES  = 220000;  // ~1100 readings
+#if USE_CELL
+static const size_t MAX_BUFFER_BYTES = 1400000;   // ~7000 readings, ~26 days
+#else
+static const size_t MAX_BUFFER_BYTES = 220000;    // ~1100 readings
+#endif
 static const int    MAX_FLUSH_PER_LOOP = 20;     // do not stall the cycle
 
 // ---------- leaf wetness model ----------
@@ -195,7 +231,11 @@ void serviceStatusLed() {
 }
 
 void updateFault() {
-#if USE_WIFI_POST
+#if USE_CELL
+  if (!cellReady)                                 currentFault = FAULT_API;
+  else if (!haveBME || !haveMLX || !haveADS)      currentFault = FAULT_SENSOR;
+  else                                            currentFault = FAULT_NONE;
+#elif USE_WIFI_POST
   if (WiFi.status() != WL_CONNECTED)              currentFault = FAULT_WIFI;
   else if (!haveBME || !haveMLX || !haveADS)      currentFault = FAULT_SENSOR;
   else if (!clockSynced)                          currentFault = FAULT_CLOCK;
@@ -404,6 +444,23 @@ void flushBuffer() {
 
 // ============================ posting ============================
 
+#if USE_CELL
+bool postBody(const String &body, bool quiet) {
+  if (!cellReady) return false;
+
+  int code = modem.postJson(CELL_HOST, "/api/v1/sensors/readings", body,
+                            DEVICE_API_KEY, CF_ACCESS_ID, CF_ACCESS_SECRET);
+  if (!quiet) Serial.printf("[reading] HTTP %d\n", code);
+
+  if (code == 401 || code == 403) {
+    Serial.println("  -> rejected. Check DEVICE_API_KEY, and that the service");
+    Serial.println("     token is attached to a Service Auth policy, not Allow.");
+  } else if (code < 0 && !quiet) {
+    Serial.println("  -> no reply. Signal, APN, or the supply sagging on TX.");
+  }
+  return code >= 200 && code < 300;
+}
+#else
 bool postBody(const String &body, bool quiet) {
   if (WiFi.status() != WL_CONNECTED) return false;
 
@@ -428,14 +485,60 @@ bool postBody(const String &body, bool quiet) {
   http.end();
   return code >= 200 && code < 300;
 }
+#endif
 
 // ============================ main ============================
+
+/* Retrieval when there is no network.
+ *
+ * If the modem is not working, every reading still lands in flash and stays
+ * there. Send 'D' on the USB serial port and the board prints the whole
+ * buffer as ordinary [payload] lines, which scripts/serial_bridge.py already
+ * knows how to ingest. Send 'C' afterwards to clear it.
+ *
+ * Deliberately two steps: nothing is deleted until you have confirmed you
+ * have it. A single keystroke that wipes a fortnight of field data is not a
+ * feature.
+ */
+void dumpBuffer() {
+  if (!LittleFS.exists(BUFFER_PATH)) { Serial.println("[dump] empty"); return; }
+  File f = LittleFS.open(BUFFER_PATH, "r");
+  if (!f) { Serial.println("[dump] could not open the buffer"); return; }
+
+  int n = 0;
+  Serial.println("[dump] begin");
+  while (f.available()) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 2) { Serial.printf("[payload] %s\n", line.c_str()); n++; }
+    delay(2);            // let the receiver keep up
+  }
+  f.close();
+  Serial.printf("[dump] end, %d readings. Send C to clear once you have them.\n", n);
+}
+
+void clearBuffer() {
+  LittleFS.remove(BUFFER_PATH);
+  Serial.println("[dump] buffer cleared");
+}
+
+void serviceSerialCommands() {
+  if (!Serial.available()) return;
+  int c = Serial.read();
+  if (c == 'D' || c == 'd') dumpBuffer();
+  else if (c == 'C' || c == 'c') clearBuffer();
+  else if (c == '?') {
+    Serial.printf("[status] fw %s  buffered %d  bytes %u\n",
+                  FIRMWARE_VERSION, bufferedCount(), (unsigned)bufferSize());
+  }
+}
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=== AgriSync Board A  fw " FIRMWARE_VERSION " ===");
   Serial.printf("device: %s -> pi: %s\n", DEVICE_ID, PI_HOST);
+  Serial.println("commands: D dump buffer, C clear, ? status");
 
   pinMode(PIN_STATUS_LED, OUTPUT);
   pinMode(PIN_RAIN_DO, INPUT_PULLUP);
@@ -455,6 +558,31 @@ void setup() {
   updateFault();
   // Let the IP stack settle before loop() fires its first POST.
   delay(BOOT_SETTLE_MS);
+#elif USE_CELL
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  Serial.println("[mode] CELLULAR");
+  Serial.printf("[cell] %s -> https://%s\n", CELL_APN, CELL_HOST);
+  modem.begin();
+
+  if (!modem.sync()) {
+    Serial.println("[cell] no reply on UART2.");
+    Serial.println("  -> TX/RX crossed? GPIO26 to modem RXD, GPIO27 to modem TXD");
+    Serial.println("  -> modem powered from its OWN supply, not the ESP32 3V3?");
+  } else if (!modem.simReady()) {
+    Serial.println("[cell] SIM not ready - seated? PIN locked?");
+  } else {
+    int q = modem.signal();
+    Serial.printf("[cell] signal %d/31%s\n", q, q == 99 ? "  (none - check the antenna)" : "");
+    for (int i = 0; i < 20 && !modem.registered(); i++) { delay(2000); Serial.print("."); }
+    Serial.println();
+    if (!modem.attached()) Serial.println("[cell] not attached to packet data");
+    cellReady = modem.dataUp();
+    Serial.printf("[cell] data %s  ip %s\n", cellReady ? "up" : "FAILED",
+                  modem.localIP().c_str());
+  }
+  currentFault = cellReady ? FAULT_NONE : FAULT_API;
+  delay(BOOT_SETTLE_MS);
 #else
   Serial.println("[mode] SERIAL ONLY - radio off, Pi stamps the timestamps");
   WiFi.mode(WIFI_OFF);
@@ -465,6 +593,7 @@ void setup() {
 
 void loop() {
   serviceStatusLed();
+  serviceSerialCommands();   // D dump, C clear, ? status
 
   if (lastPost != 0 && millis() - lastPost < POST_INTERVAL_MS) {
     delay(20);
@@ -475,6 +604,11 @@ void loop() {
 #if USE_WIFI_POST
   connectWiFi();
   if (!clockSynced) syncClock();
+#elif USE_CELL
+  if (!cellReady) {
+    Serial.println("[cell] retrying data context");
+    cellReady = modem.dataUp();
+  }
 #endif
 
   JsonDocument doc;
@@ -534,13 +668,16 @@ void loop() {
 #if USE_WIFI_POST
   doc["rssi"]            = WiFi.RSSI();
   doc["buffered_count"]  = bufferedCount();
+#elif USE_CELL
+  doc["rssi"]            = modem.signal();     // 0-31, not dBm
+  doc["buffered_count"]  = bufferedCount();
 #endif
 
   String body;
   serializeJson(doc, body);
   Serial.printf("[payload] %s\n", body.c_str());
 
-#if !USE_WIFI_POST
+#if TRANSPORT == TRANSPORT_SERIAL
   // Tethered. The line above is the delivery mechanism - the bridge on the Pi
   // reads it. Nothing to retry, nothing to buffer.
   updateFault();

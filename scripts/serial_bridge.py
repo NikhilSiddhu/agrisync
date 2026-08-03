@@ -140,6 +140,15 @@ def run_once(session):
     # The board is mid-cycle; drop whatever partial line is buffered.
     time.sleep(0.3)
     ser.reset_input_buffer()
+
+    # Ask for anything held in flash. A board that has been in the field with
+    # no working modem will have a fortnight of readings stored; this pulls
+    # them out the moment you plug in. Harmless when the buffer is empty.
+    if os.getenv("BRIDGE_DUMP_ON_CONNECT", "1") == "1":
+        log("requesting any buffered readings (D)")
+        ser.write(b"D")
+        ser.flush()
+
     log("connected, waiting for payloads")
 
     sent = failed = garbage = 0

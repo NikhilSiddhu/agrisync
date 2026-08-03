@@ -1,0 +1,85 @@
+Firmware 1.4.0 — cellular, and a way home without it
+====================================================
+
+    scp ~/Downloads/agrisync_fw140.zip agrisync@nikhil.local:~/
+    cd ~/agrisync && unzip -o ~/agrisync_fw140.zip
+
+*** THIS HAS NEVER BEEN COMPILED. ***
+
+I could not build it here — the sandbox kills background processes and the
+ESP32 toolchain is a 200 MB download. Structure is verified (balanced
+preprocessor, balanced braces, every symbol present) but you will be the first
+to run a compiler over it. Budget 20 minutes on Saturday for that, before you
+touch the modem.
+
+    cd ~/agrisync/firmware/synthetic_wifi
+    sudo systemctl stop agrisync-serial-bridge
+    export WIFI_SSID='AIRTEL' WIFI_PASSWORD='093001nyn' PI_HOST='192.168.1.39'
+    export DEVICE_API_KEY="$(grep '^DEVICE_API_KEY=' ~/agrisync/.env | cut -d= -f2)"
+    export CELL_APN='jionet' CF_ACCESS_ID='x' CF_ACCESS_SECRET='x'
+    pio run                       # compile only. Fix anything it finds.
+
+--------------------------------------------------------------------------
+TRANSPORT, one flag in platformio.ini
+--------------------------------------------------------------------------
+
+    -DTRANSPORT=0    tethered to the Pi over USB      <- where you are now
+    -DTRANSPORT=1    WiFi                              bench only
+    -DTRANSPORT=2    A7670C cellular                   the field
+
+--------------------------------------------------------------------------
+CELLULAR (TRANSPORT=2)
+--------------------------------------------------------------------------
+
+  Wiring        ESP32 GPIO26 -> modem RXD
+                ESP32 GPIO27 -> modem TXD
+                common ground
+                modem on its OWN supply, never the ESP32's 3V3
+
+  Power         2 A bursts on transmit. At least 470 uF at the module, short
+                thick leads. A sagging supply resets the modem mid-request and
+                looks exactly like a firmware bug.
+
+  Antenna       On before power. Every time. Transmitting into an open
+                connector can destroy the amplifier.
+
+  Flash first   Every reading is written to flash and only removed once the
+                server confirms it. ~7000 readings, about 26 days at the
+                5-minute field interval.
+
+  Interval      5 minutes in cellular mode, 1 minute on the bench. Twelve
+                samples an hour is ample for wet-hour accounting and it
+                quadruples both battery life and storage.
+
+  Build flags   CELL_APN            jionet (Jio) or airtelgprs.com (Airtel)
+                CF_ACCESS_ID        Cloudflare service token client ID
+                CF_ACCESS_SECRET    service token client secret
+                MODEM_TRACE=1       every byte to and from the modem.
+                                    Turn this on for the first bring-up.
+
+--------------------------------------------------------------------------
+IF THE MODEM IS NOT READY ON MONDAY — deploy anyway
+--------------------------------------------------------------------------
+
+  Flash with TRANSPORT=2 regardless. With no working modem every POST fails,
+  so every reading stays in flash. The box records for about 26 days
+  unattended.
+
+  To collect it, plug the board into the Pi (or a laptop) over USB:
+
+      sudo systemctl start agrisync-serial-bridge
+      journalctl -u agrisync-serial-bridge -f
+
+  The bridge now sends 'D' on connect, the board replays its whole buffer as
+  normal [payload] lines, and they land in MongoDB with their real timestamps.
+
+  Then, once you have confirmed the count, send 'C' to clear it. Two steps on
+  purpose — nothing deletes a fortnight of field data on a single keystroke.
+
+  Serial commands:  D  dump buffer
+                    C  clear it
+                    ?  firmware version, buffered count, bytes used
+
+  This means the box can go in the ground on Monday whether or not the
+  cellular link works. Measurement starts with the crop, which is the part you
+  cannot go back and recover.
