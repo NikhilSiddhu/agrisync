@@ -449,17 +449,19 @@ bool postBody(const String &body, bool quiet) {
   if (!cellReady) return false;
 
   int code = modem.postJson(CELL_HOST, "/api/v1/sensors/readings", body,
-                            DEVICE_API_KEY, CF_ACCESS_ID, CF_ACCESS_SECRET);
+                            HMAC_SECRET);
+
   if (!quiet) Serial.printf("[reading] HTTP %d\n", code);
 
-  if (code == 401 || code == 403) {
-    Serial.println("  -> rejected. Check DEVICE_API_KEY, and that the service");
-    Serial.println("     token is attached to a Service Auth policy, not Allow.");
-  } else if (code < 0 && !quiet) {
-    Serial.println("  -> no reply. Signal, APN, or the supply sagging on TX.");
+if (code == 401) {
+    Serial.println("  -> signature rejected. Either HMAC_SECRET does not match");
+    Serial.println("     .env on the Pi, or the clock is more than 15 min out.");
+  } else if (code == -2) {
+    Serial.println("  -> no clock. NTP sync failed, cannot sign.");
   }
-  return code >= 200 && code < 300;
+return code >= 200 && code < 300;
 }
+
 #else
 bool postBody(const String &body, bool quiet) {
   if (WiFi.status() != WL_CONNECTED) return false;
@@ -562,7 +564,7 @@ void setup() {
   WiFi.mode(WIFI_OFF);
   btStop();
   Serial.println("[mode] CELLULAR");
-  Serial.printf("[cell] %s -> https://%s\n", CELL_APN, CELL_HOST);
+  Serial.printf("[cell] %s -> http://%s\n", CELL_APN, CELL_HOST);
   modem.begin();
 
   if (!modem.sync()) {
@@ -578,6 +580,10 @@ void setup() {
     Serial.println();
     if (!modem.attached()) Serial.println("[cell] not attached to packet data");
     cellReady = modem.dataUp();
+    if (cellReady) {
+      long t = modem.syncTime();
+      Serial.printf("[cell] clock %s (epoch %ld)\n", t ? "ok" : "FAILED", t);
+    }
     Serial.printf("[cell] data %s  ip %s\n", cellReady ? "up" : "FAILED",
                   modem.localIP().c_str());
   }

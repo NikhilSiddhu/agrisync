@@ -8,6 +8,7 @@ load_dotenv()
 class Config:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/agrisync")
     DEVICE_API_KEY = os.getenv("DEVICE_API_KEY", "")
+    DEVICE_HMAC_SECRET = os.getenv("DEVICE_HMAC_SECRET", "")
     # Optional. When empty, GET endpoints are open. Set it before you expose
     # the API through a tunnel or a port forward.
     READ_API_KEY = os.getenv("READ_API_KEY", "")
