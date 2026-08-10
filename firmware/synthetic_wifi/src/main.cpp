@@ -316,6 +316,8 @@ void scanI2C() {
 
 void setupSensors() {
   Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setClock(100000);   // MLX90614 is SMBus and often refuses 400kHz
+  delay(300);              // it needs ~250ms after power before it answers
   scanI2C();
 
   if (bme.begin(0x76, &Wire)) {
@@ -675,7 +677,10 @@ void loop() {
   doc["rssi"]            = WiFi.RSSI();
   doc["buffered_count"]  = bufferedCount();
 #elif USE_CELL
-  doc["rssi"]            = modem.signal();     // 0-31, not dBm
+
+int csq = modem.signal();
+  if (csq < 99) doc["rssi"] = -113 + 2 * csq;  // CSQ -> dBm, matches WiFi
+
   doc["buffered_count"]  = bufferedCount();
 #endif
 
