@@ -46,3 +46,10 @@ SETUP_OTP.md
 __pycache__/
 *.pyc
 .pytest_cache/
+
+.env
+readings-backup-*.json
+mongo-data/
+backups/
+*.bak
+*.bak[0-9]

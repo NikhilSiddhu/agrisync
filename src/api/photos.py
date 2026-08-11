@@ -294,8 +294,9 @@ def upload():
     ok, reason = verify_signature()
     if not ok:
         current_app.logger.warning(
-            "rejected photo upload from %s: %s",
-            request.headers.get("CF-Connecting-IP", request.remote_addr), reason)
+            "rejected photo upload from %s: %s (received %d bytes, name=%s)",
+            request.headers.get("CF-Connecting-IP", request.remote_addr), reason,
+            len(request.get_data()), request.args.get("name"))
         return jsonify({"error": "unauthorized"}), 401
 
     data = request.get_data()
