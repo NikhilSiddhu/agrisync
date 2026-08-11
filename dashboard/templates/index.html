@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Dashboard | AgriSync</title>
-<meta name="description" content="Live field data from the AgriSync station in {{ site.name }}, {{ site.region }} — cabbage microclimate measured at the leaf, every minute."/>
+<meta name="description" content="Live field data from the AgriSync station in {{ site.name }}, {{ site.region }} — cabbage microclimate measured at the leaf, every five minutes."/>
 <meta name="theme-color" content="#f4f2ec"/>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233f5e39'><path d='M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z'/></svg>"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -481,6 +481,19 @@ body.ag-in .only-out{ display:none; }
 }
 .admin-strip a:hover{ color:var(--ink); border-bottom-color:var(--moss); }
 </style>
+<style>
+.risk-empty{ max-width:520px; margin:0 auto; text-align:center; }
+.risk-empty-h{
+  margin:0 0 .5rem; font-size:1.05rem; font-weight:500; color:var(--ink);
+}
+.risk-empty-p{
+  margin:0 0 .6rem; font-size:.9rem; line-height:1.6; color:var(--ink-soft);
+}
+.risk-empty-r{ font-size:.82rem; opacity:.75; }
+.risk-empty a{ color:var(--moss); text-decoration:none;
+  border-bottom:1px solid rgba(92,115,64,.35); }
+.risk-empty a:hover{ border-bottom-color:var(--moss); }
+</style>
 </head>
 <body id="top">
 
@@ -508,7 +521,7 @@ body.ag-in .only-out{ display:none; }
     <div class="section-head reveal">
       <span class="eyebrow">Live from the field</span>
       <h2>{{ site.name }} station, <span class="serif">speaking now.</span></h2>
-      <p class="lede">Cabbage microclimate measured at the leaf, every minute, in
+      <p class="lede">Cabbage microclimate measured at the leaf, every five minutes, in
       {{ site.name }}, {{ site.region }}.</p>
       <div style="margin-top:1.6rem">
         <span class="livepill">
@@ -604,8 +617,23 @@ body.ag-in .only-out{ display:none; }
         <p class="risk-note">Uncalibrated infection pressure, not a prediction.
           <a href="https://agrisync.tech/#engine">How this is calculated →</a></p>
       {% else %}
-        <p style="text-align:center;color:var(--ink-soft);font-size:.95rem">
-          {{ risk.reason if risk.reason else 'Waiting for leaf wetness data.' }}</p>
+        {#- An empty panel under a heading that promises scores reads as a
+            broken feature. It is not: the models need wet hours, wetness is
+            inferred from dew point, and it has not been wet. Saying that is
+            the difference between looking careless and looking careful. -#}
+        <div class="risk-empty">
+          <p class="risk-empty-h">Nothing to score yet.</p>
+          <p class="risk-empty-p">
+            Both infection models need leaf wetness, and wetness is inferred
+            from air temperature and dew point rather than measured directly.
+            The leaf has not reached its dew point recently, so there are no
+            wet hours to score against.
+            {% if risk.reason %}<br><span class="risk-empty-r">{{ risk.reason }}</span>{% endif %}
+          </p>
+          <p class="risk-empty-p">
+            <a href="https://agrisync.tech/#engine">How the scoring works &rarr;</a>
+          </p>
+        </div>
       {% endif %}
       </div>
     </div>
@@ -623,7 +651,7 @@ body.ag-in .only-out{ display:none; }
         {%- if member and span.available %}
           {{ "{:,}".format(span.readings) }} readings since {{ span.since }}.
         {%- else %}
-          One row per minute, straight from the station.
+          One row every five minutes, straight from the station.
         {%- endif -%}
       </p>
     </div>
@@ -775,7 +803,7 @@ body.ag-in .only-out{ display:none; }
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9h4v12H3zM9 9h3.8v1.7h.05c.53-1 1.83-2.05 3.76-2.05C20.4 8.65 21 11 21 14.2V21h-4v-6c0-1.43-.03-3.27-2-3.27-2 0-2.3 1.56-2.3 3.17V21H9z"/></svg>
           LinkedIn
         </a>
-        <a class="btn btn-glass" href="https://x.com/" target="_blank" rel="noopener">
+        <a class="btn btn-glass" href="https://x.com/nikhilsiddhu_" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 2H22l-7 8 8.2 12H16l-5-7.3L5.3 22H2l7.5-8.6L1.7 2H9l4.6 6.7zm-1.1 18h1.7L7.3 3.8H5.5z"/></svg>
           X
         </a>

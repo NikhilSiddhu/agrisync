@@ -118,6 +118,44 @@ def export_csv():
     )
 
 
+def _not_admin(rows):
+    """Drop anybody in ADMIN_EMAILS from a list of visitor or request rows.
+
+    Compares lowercased, because an address typed into .env with different
+    capitalisation is the same mailbox and would otherwise slip through.
+    """
+    out = []
+    for r in rows or []:
+        email = (r.get("email") or "").strip().lower()
+        if email and access.is_admin({"email": email}):
+            continue
+        out.append(r)
+    return out
+
+
+def _render_register(ident):
+    """The visitor register and request queue, with admins filtered out.
+
+    Both admin routes render the same page, so they share this rather than
+    keeping two copies of the same six arguments in step by hand.
+    """
+    all_visitors = visitors.listing()
+    shown = _not_admin(all_visitors)
+
+    # Subtract the ones actually removed. Hiding rows while leaving the
+    # headline at 5 would just make the page argue with itself.
+    hidden = len(all_visitors) - len(shown)
+    total = max(0, visitors.count() - hidden)
+
+    return render_template("visitors.html",
+                           visitors=shown,
+                           requests=_not_admin(visitors.requests_listing()),
+                           total=total,
+                           identity=ident,
+                           display_name=visitors.display_name(ident["email"]),
+                           logout_url=_logout_url())
+
+
 @bp.get("/admin/visitors")
 def admin_visitors():
     """Who has signed in. Only for the emails listed in ADMIN_EMAILS.
@@ -135,13 +173,7 @@ def admin_visitors():
         return jsonify({"error": "forbidden",
                         "detail": "your email is not in ADMIN_EMAILS"}), 403
 
-    return render_template("visitors.html",
-                           visitors=visitors.listing(),
-                           requests=visitors.requests_listing(),
-                           total=visitors.count(),
-                           identity=ident,
-                           display_name=visitors.display_name(ident["email"]),
-                           logout_url=_logout_url())
+    return _render_register(ident)
 
 
 @bp.post("/request-data")
@@ -205,13 +237,7 @@ def admin_requests():
         if not access.configured():
             return jsonify({"error": "identity unavailable"}), 503
         return jsonify({"error": "forbidden"}), 403
-    return render_template("visitors.html",
-                           visitors=visitors.listing(),
-                           requests=visitors.requests_listing(),
-                           total=visitors.count(),
-                           identity=ident,
-                           display_name=visitors.display_name(ident["email"]),
-                           logout_url=_logout_url())
+    return _render_register(ident)
 
 
 @bp.post("/profile")

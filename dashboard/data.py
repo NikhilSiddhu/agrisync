@@ -21,6 +21,7 @@ from src.bucketing import bucket_minutes_for, bucketed
 
 WET_THRESHOLD = 50.0
 STALE_MINUTES = int(os.getenv("DASH_STALE_MINUTES", "30"))
+SAMPLE_MINUTES = max(1, int(os.getenv("SAMPLE_MINUTES", "5")))
 
 # Hard public limit. Not a default - a ceiling. Anyone can ask this service for
 # a longer window and it will quietly give them 7 days, because the deeper
@@ -133,7 +134,10 @@ def latest():
 def series(hours=MAX_PUBLIC_HOURS):
     """Grouped in the database. The cap is applied here, before the query is
     built, which is why src/bucketing.py never needs to know about it."""
-    hours = clamp(hours)
+    # Absolute ceiling only. app.py has already applied the public or
+    # member limit from a signed cookie; re-applying the public one here
+    # would silently undo it and serve a member seven days.
+    hours = clamp(hours, member=True)  # caller already decided the window
     query = {"ts": {"$gte": datetime.now(timezone.utc) - timedelta(hours=hours)},
              "quality_flags": {"$exists": False}}
 
@@ -150,7 +154,10 @@ def series(hours=MAX_PUBLIC_HOURS):
 
 def wet_hours(hours=MAX_PUBLIC_HOURS):
     """Hours the leaf was wet. The number every disease model actually consumes."""
-    hours = clamp(hours)
+    # Absolute ceiling only. app.py has already applied the public or
+    # member limit from a signed cookie; re-applying the public one here
+    # would silently undo it and serve a member seven days.
+    hours = clamp(hours, member=True)  # caller already decided the window
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     rows = list(
         _db().readings.find(
@@ -171,7 +178,10 @@ def wet_hours(hours=MAX_PUBLIC_HOURS):
 
 def stats(hours=MAX_PUBLIC_HOURS):
     """Headline numbers for the summary strip."""
-    hours = clamp(hours)
+    # Absolute ceiling only. app.py has already applied the public or
+    # member limit from a signed cookie; re-applying the public one here
+    # would silently undo it and serve a member seven days.
+    hours = clamp(hours, member=True)  # caller already decided the window
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     rows = list(
         _db().readings.find(
@@ -182,7 +192,11 @@ def stats(hours=MAX_PUBLIC_HOURS):
     temps = [r["air_temp_c"] for r in rows if r.get("air_temp_c") is not None]
     hums = [r["humidity_pct"] for r in rows if r.get("humidity_pct") is not None]
 
-    expected = hours * 60  # one reading a minute
+    # How often the station actually reports. Board A posts every five
+    # minutes, so assuming one a minute made the denominator five times
+    # too large and the percentage meaningless. Override with
+    # SAMPLE_MINUTES in .env if the firmware interval changes.
+    expected = hours * 60 / SAMPLE_MINUTES
     return {
         "readings": len(rows),
         "coverage_pct": round(100.0 * len(rows) / expected, 1) if expected else None,
