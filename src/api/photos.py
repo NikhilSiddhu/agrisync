@@ -134,10 +134,11 @@ def gallery():
             is_admin=visitors.is_admin(email),
             total_mb=round(total_bytes / 1024 / 1024, 1))
 
-    if visitors.has_requested(email):
-        return render_template("photos.html", state="pending", email=email)
-
-    return render_template("photos.html", state="request", email=email)
+    # Not approved. Send them back to the dashboard rather than showing a
+    # bare form on a page with no header and no way back. The modal there
+    # opens in the right state - "already on the list" if they have asked,
+    # the form if they have not.
+    return redirect("https://dashboard.agrisync.tech/?request=photos")
 
 
 @bp.post("/photos/request")

@@ -233,7 +233,7 @@ def risk():
     wh = wet_hours(24)
     if not wh["available"]:
         return {"available": False, "diseases": [],
-                "reason": "leaf wetness needs the MLX90614, which is not fitted yet"}
+                "reason": "leaf wetness is estimated from air temperature and dew point"}
 
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     rows = list(_db().readings.find(

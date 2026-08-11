@@ -16,6 +16,8 @@ from src.auth import require_read_key
 # as a fallback while both exist. See src/whoami.py.
 from src import whoami
 
+from flask import redirect  # noqa: E402
+
 bp = Blueprint("views", __name__)
 
 ENDPOINTS = [
@@ -107,8 +109,14 @@ def export_csv():
         if not access.configured():
             return jsonify({"error": "identity unavailable",
                             "detail": "CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD are unset"}), 503
+        # A browser gets sent back to the dashboard with the modal open. A
+        # script gets the 403 it can actually handle - redirecting an API
+        # client to an HTML page is how you get a parser reporting success
+        # while reading a sign-in screen.
+        if "text/html" in (request.headers.get("Accept") or ""):
+            return redirect("https://dashboard.agrisync.tech/?request=data")
         return jsonify({"error": "not permitted",
-                        "detail": "request the dataset from the history page"}), 403
+                        "detail": "request the dataset from the dashboard"}), 403
 
     return Response(
         history.stream_csv(),
