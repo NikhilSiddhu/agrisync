@@ -2,13 +2,27 @@
 
 One implementation so the number you see in a browser and the number that
 triggers an alert can never disagree.
+
+MUTING A KNOWN-ABSENT SENSOR
+    Set IGNORED_SENSORS in .env, comma separated:
+
+        IGNORED_SENSORS=mlx90614
+
+    That sensor stops counting as a fault, and any check that depends on it
+    is skipped too. Nothing else is silenced.
+
+    This exists because an alert you have decided to ignore is worse than no
+    alert: it trains you to dismiss the whole channel, and the real one gets
+    dismissed with it. Muting deliberately, in config, with a note, beats
+    learning to skim past it.
+
+    Clear the variable when the hardware is fixed and the check comes back.
 """
 import os
 from datetime import datetime, timedelta, timezone
 
-# Sensors the build is supposed to have. Anything here that stops appearing
-# is a fault, not a config change.
-CORE_SENSORS = ("bme280", "mlx90614", "ads1115")
+# Every sensor this build can have.
+ALL_SENSORS = ("bme280", "mlx90614", "ads1115")
 
 STATUS_OK = "ok"
 STATUS_DEGRADED = "degraded"   # reporting, but something is wrong
@@ -16,6 +30,22 @@ STATUS_STALE = "stale"         # has not reported recently
 STATUS_MISSING = "missing"     # never reported at all
 
 SEVERITY = {STATUS_OK: 0, STATUS_DEGRADED: 1, STATUS_STALE: 2, STATUS_MISSING: 3}
+
+
+def ignored_sensors():
+    """Sensors deliberately excluded from health checks, from .env."""
+    raw = os.getenv("IGNORED_SENSORS", "")
+    return {s.strip().lower() for s in raw.split(",") if s.strip()}
+
+
+def core_sensors():
+    """Sensors whose absence is a genuine fault right now."""
+    skip = ignored_sensors()
+    return tuple(s for s in ALL_SENSORS if s not in skip)
+
+
+# Kept for anything that imported the old name.
+CORE_SENSORS = ALL_SENSORS
 
 
 def stale_minutes():
@@ -41,6 +71,7 @@ def assess_device(db, device_id, window_hours=6):
         last_ts = last_ts.replace(tzinfo=timezone.utc)
     age_min = (now - last_ts).total_seconds() / 60.0
 
+    skip = ignored_sensors()
     problems = []
     status = STATUS_OK
 
@@ -50,7 +81,7 @@ def assess_device(db, device_id, window_hours=6):
 
     # Which sensors did the board report finding on its last cycle
     sensors = latest.get("sensors") or {}
-    missing = [s for s in CORE_SENSORS if sensors.get(s) is False]
+    missing = [s for s in core_sensors() if sensors.get(s) is False]
     if missing:
         problems.append("sensor not detected on the bus: " + ", ".join(missing))
         if status == STATUS_OK:
@@ -69,7 +100,10 @@ def assess_device(db, device_id, window_hours=6):
 
     # leaf_wetness silently vanishing is the failure mode that costs you the
     # most, because the data keeps flowing and looks healthy.
-    if "leaf_wetness" not in latest:
+    #
+    # Skipped when the MLX is deliberately ignored - it cannot be computed
+    # without leaf temperature, so alerting on it would just be noise.
+    if "leaf_wetness" not in latest and "mlx90614" not in skip:
         problems.append("leaf_wetness absent - MLX90614 or humidity reading is down")
         if status == STATUS_OK:
             status = STATUS_DEGRADED
@@ -82,13 +116,13 @@ def assess_device(db, device_id, window_hours=6):
 
     rssi = latest.get("rssi")
     if rssi is not None and rssi < -85:
-        problems.append(f"WiFi signal {rssi} dBm - marginal, expect dropouts")
+        problems.append(f"signal {rssi} dBm - marginal, expect dropouts")
         if status == STATUS_OK:
             status = STATUS_DEGRADED
 
     backfilled = sum(1 for r in recent if r.get("backfilled"))
 
-    return {
+    result = {
         "device_id": device_id,
         "status": status,
         "problems": problems,
@@ -102,6 +136,13 @@ def assess_device(db, device_id, window_hours=6):
         "rssi": rssi,
         "firmware": latest.get("firmware"),
     }
+
+    # Visible in the API and the dashboard, so a muted sensor is never a
+    # silent one. You should always be able to see what is not being checked.
+    if skip:
+        result["ignored_sensors"] = sorted(skip)
+
+    return result
 
 
 def assess_all(db, window_hours=6):

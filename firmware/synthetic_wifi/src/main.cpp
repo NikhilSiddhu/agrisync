@@ -82,6 +82,7 @@
 
 #if USE_CELL
 #include "modem.h"
+#include "photoreceiver.h"
 static const int PIN_MODEM_RX = 27;   // ESP32 RX2  <- modem TXD
 static const int PIN_MODEM_TX = 26;   // ESP32 TX2  -> modem RXD
 Modem modem(Serial2, PIN_MODEM_RX, PIN_MODEM_TX, CELL_APN);
@@ -568,6 +569,7 @@ void setup() {
   Serial.println("[mode] CELLULAR");
   Serial.printf("[cell] %s -> http://%s\n", CELL_APN, CELL_HOST);
   modem.begin();
+  photoReceiverBegin();
 
   if (!modem.sync()) {
     Serial.println("[cell] no reply on UART2.");
@@ -600,6 +602,9 @@ void setup() {
 }
 
 void loop() {
+#if USE_CELL
+  photoReceiverService(modem, CELL_HOST, HMAC_SECRET, cellReady);
+#endif
   serviceStatusLed();
   serviceSerialCommands();   // D dump, C clear, ? status
 

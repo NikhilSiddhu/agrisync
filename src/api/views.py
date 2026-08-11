@@ -12,6 +12,10 @@ from flask import Blueprint, Response, current_app, jsonify, render_template, re
 from src import access, history, notify, visitors
 from src.auth import require_read_key
 
+# Identity now comes from the Google session, with Cloudflare Access
+# as a fallback while both exist. See src/whoami.py.
+from src import whoami
+
 bp = Blueprint("views", __name__)
 
 ENDPOINTS = [
@@ -35,7 +39,7 @@ def _logout_url():
 
 def _who():
     """Verified visitor, recorded on the way past. Never fatal."""
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if ident and ident.get("email"):
         try:
             visitors.record(ident["email"], request.path)
@@ -97,7 +101,7 @@ def export_csv():
     season of raw work as a single file — that is a conversation, not a button.
     Everyone else gets the request flow below.
     """
-    ident = access.identity(request)
+    ident = whoami.current(request)
     email = (ident or {}).get("email")
     if not (access.is_admin(ident) or visitors.is_granted(email)):
         if not access.configured():
@@ -121,7 +125,7 @@ def admin_visitors():
     Access already decides who reaches this hostname at all. This is the
     second gate: being able to sign in does not make you an administrator.
     """
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if not access.is_admin(ident):
         if not access.configured():
             return jsonify({
@@ -147,7 +151,7 @@ def request_data():
     Deliberately not an email form. Cloudflare has already verified the address,
     so there is nothing to type and nothing to spoof.
     """
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if not ident or not ident.get("email"):
         if not access.configured():
             return jsonify({"error": "identity unavailable"}), 503
@@ -196,7 +200,7 @@ def request_data():
 
 @bp.get("/admin/requests")
 def admin_requests():
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if not access.is_admin(ident):
         if not access.configured():
             return jsonify({"error": "identity unavailable"}), 503
@@ -214,7 +218,7 @@ def admin_requests():
 def save_profile():
     """Name once, on first visit. Cloudflare proved the address; it cannot
     tell us what to call someone."""
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if not ident or not ident.get("email"):
         if not access.configured():
             return jsonify({"error": "identity unavailable"}), 503
@@ -242,7 +246,7 @@ def admin_grant(email, action):
     from the database, so what they fetch is always current and there is
     nothing to regenerate nightly.
     """
-    ident = access.identity(request)
+    ident = whoami.current(request)
     if not access.is_admin(ident):
         if not access.configured():
             return jsonify({"error": "identity unavailable"}), 503

@@ -244,6 +244,243 @@
     .card:hover{transform:none}
   }
 </style>
+
+<style>
+/* ==================================================== members' view =======
+
+   Two rules govern everything below.
+
+   ONE. Locked never means empty. An empty box with "sign in" on it reads as a
+   door slammed shut, and the honest reaction to a slammed door is to leave.
+   So every locked panel renders its real shape - a table with real headers, a
+   grid with the real photo count, a range picker with the real ranges - and
+   then withdraws the detail behind a soft fade. You can see that something
+   substantial is there. That is the difference between a tease and a refusal.
+
+   TWO. The fade is decoration, not security. The server does not send the
+   locked numbers to an anonymous browser, so there is nothing behind the blur
+   to recover with devtools. If these rules were deleted entirely the page
+   would show skeleton bars, not data.
+
+   Default state is LOCKED. If the auth script is blocked or the network dies
+   the page fails closed, and nobody watches the full record flash up for
+   200ms before being hidden.
+   ======================================================================== */
+
+.lockable{ position:relative; }
+
+.lock-body{
+  transition:filter .55s cubic-bezier(.2,.7,.3,1), opacity .55s ease;
+}
+body:not(.ag-in) .lock-body{
+  filter:blur(7px) saturate(.72);
+  opacity:.5;
+  pointer-events:none;
+  user-select:none;
+}
+
+/* The veil sits over the locked body. It is a gradient rather than a flat
+   wash so the top of the panel stays legible and only the depth is taken
+   away - you can read the first rows and watch them dissolve, which is the
+   part that makes someone want the rest. */
+.lock-veil{
+  position:absolute; inset:0;
+  display:flex; align-items:flex-end; justify-content:center;
+  padding:1.5rem;
+  border-radius:var(--r);
+  background:linear-gradient(180deg,
+    rgba(244,242,236,0) 0%,
+    rgba(244,242,236,.55) 42%,
+    rgba(244,242,236,.93) 78%,
+    rgba(244,242,236,.99) 100%);
+  z-index:3;
+}
+body.ag-in .lock-veil{ display:none; }
+
+.lock-card{
+  width:100%; max-width:430px; text-align:center;
+  padding:1.6rem 1.5rem 1.5rem;
+  background:rgba(251,250,246,.86);
+  backdrop-filter:blur(14px) saturate(1.15);
+  -webkit-backdrop-filter:blur(14px) saturate(1.15);
+  border:1px solid rgba(228,225,214,.9);
+  border-radius:calc(var(--r) - 2px);
+  box-shadow:0 1px 2px rgba(30,40,25,.05), 0 18px 46px rgba(30,40,25,.13);
+}
+
+/* A thin warm hairline along the top edge. It signals "there is more here"
+   without the red-and-padlock vocabulary of an error state. */
+.lock-card::before{
+  content:''; display:block;
+  height:2px; width:44px; margin:0 auto 1.05rem;
+  border-radius:2px;
+  background:linear-gradient(90deg,var(--moss),var(--amber));
+}
+
+.lock-eyebrow{
+  display:inline-flex; align-items:center; gap:.4rem;
+  font-size:.7rem; font-weight:600; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--moss);
+  margin-bottom:.6rem;
+}
+.lock-eyebrow svg{ width:11px; height:11px; }
+
+.lock-card h4{
+  margin:0 0 .45rem;
+  font-size:1.3rem; font-weight:500; line-height:1.25; color:var(--ink);
+}
+.lock-card h4 em{ font-style:italic; font-family:Georgia,'Times New Roman',serif; }
+.lock-card p{
+  margin:0 0 1.15rem;
+  font-size:.9rem; line-height:1.55; color:var(--ink-soft);
+}
+.lock-foot{
+  display:block; margin-top:.7rem;
+  font-size:.72rem; color:var(--ink-soft); opacity:.85;
+}
+
+/* ---- skeleton rows -------------------------------------------------------
+   Under the fade sit grey bars, never numbers. Fabricated readings on a page
+   whose entire claim is "these are real measurements" would be a poor trade
+   for a fuller-looking screenshot. A skeleton says "rows continue" and lies
+   about nothing. */
+.skel-row{
+  display:grid; grid-template-columns:1.3fr 1fr 1fr 1fr 1fr;
+  gap:1rem; padding:.72rem .9rem;
+  border-top:1px solid var(--line);
+}
+.skel-row span{
+  height:9px; border-radius:5px;
+  background:linear-gradient(90deg,#e8e5db,#efece3,#e8e5db);
+  background-size:200% 100%;
+  animation:skel 2.4s ease-in-out infinite;
+}
+.skel-row span:nth-child(2){ width:62%; }
+.skel-row span:nth-child(3){ width:48%; }
+.skel-row span:nth-child(4){ width:70%; }
+.skel-row span:nth-child(5){ width:40%; }
+@keyframes skel{ 0%,100%{background-position:0% 0} 50%{background-position:-140% 0} }
+@media (prefers-reduced-motion:reduce){ .skel-row span{ animation:none; } }
+
+/* ---- readings table ---------------------------------------------------- */
+.rt-wrap{ overflow:hidden; border-radius:var(--r); }
+body.ag-in .rt-wrap{ max-height:560px; overflow-y:auto; }
+.rt{ width:100%; border-collapse:collapse; font-size:.87rem; }
+.rt thead th{
+  position:sticky; top:0; z-index:1;
+  background:var(--card);
+  text-align:left; font-weight:600;
+  font-size:.68rem; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--ink-soft);
+  padding:.85rem .9rem;
+  border-bottom:1px solid var(--line);
+}
+.rt tbody td{
+  padding:.72rem .9rem;
+  border-top:1px solid var(--line);
+  color:var(--ink);
+  font-variant-numeric:tabular-nums;
+}
+.rt tbody tr:hover td{ background:rgba(92,115,64,.045); }
+.rt .t{ color:var(--ink-soft); white-space:nowrap; }
+.rt .muted{ color:var(--ink-soft); opacity:.5; }
+
+/* ---- images grid ------------------------------------------------------- */
+.img-grid{
+  display:grid; gap:.6rem;
+  grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+}
+.img-cell{
+  aspect-ratio:4/3; border-radius:10px;
+  background:linear-gradient(135deg,#dfe3d4,#eceadf 55%,#d9ded0);
+  border:1px solid var(--line);
+}
+.img-cell:nth-child(3n){ background:linear-gradient(135deg,#e3e6d8,#f0eee5 50%,#dde2d2); }
+.img-cell:nth-child(4n){ background:linear-gradient(160deg,#dae0cf,#eceadf); }
+
+/* ---- range picker ------------------------------------------------------ */
+.range .locked{
+  position:relative;
+  opacity:.5;
+  padding-right:1.55rem;
+  cursor:pointer;
+}
+.range .locked::after{
+  content:''; position:absolute; right:.6rem; top:50%;
+  width:9px; height:11px; margin-top:-5.5px;
+  background:currentColor;
+  -webkit-mask:var(--lockmask) center/contain no-repeat;
+  mask:var(--lockmask) center/contain no-repeat;
+}
+body.ag-in .range .locked{ opacity:1; padding-right:.95rem; cursor:auto; }
+body.ag-in .range .locked::after{ display:none; }
+:root{
+  --lockmask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 10V8a6 6 0 0 1 12 0v2h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V11a1 1 0 0 1 1-1zm2 0h8V8a4 4 0 0 0-8 0z'/%3E%3C/svg%3E");
+}
+
+/* ---- signed-in only / signed-out only ---------------------------------- */
+.only-in{ display:none; }
+body.ag-in .only-in{ display:revert; }
+body.ag-in .only-out{ display:none; }
+
+/* A signed-in visitor gets a quiet confirmation rather than a banner. They
+   asked to see more, they can see more; announcing it twice is noise. */
+.member-chip{
+  display:inline-flex; align-items:center; gap:.45rem;
+  padding:.3rem .72rem;
+  font-size:.72rem; letter-spacing:.06em; color:var(--moss);
+  background:rgba(92,115,64,.09);
+  border:1px solid rgba(92,115,64,.2);
+  border-radius:999px;
+}
+.member-chip::before{
+  content:''; width:5px; height:5px; border-radius:50%;
+  background:var(--moss);
+}
+</style>
+
+<style>
+/* Bulleted proof inside the lock card. Three concrete things beat one vague
+   "and more" - the reason to sign in has to be legible in two seconds. */
+.lock-includes{
+  list-style:none; margin:0 0 1.1rem; padding:0;
+  text-align:left; display:inline-block;
+}
+.lock-includes li{
+  position:relative; padding-left:1.35rem; margin:.34rem 0;
+  font-size:.845rem; line-height:1.45; color:var(--ink-soft);
+}
+.lock-includes li::before{
+  content:''; position:absolute; left:.15rem; top:.52em;
+  width:5px; height:5px; border-radius:50%; background:var(--moss);
+}
+
+.member-actions{
+  margin-top:1.2rem; display:flex; gap:.6rem;
+  justify-content:center; flex-wrap:wrap;
+}
+
+/* Deliberately quiet. These are tools, not an achievement - and this strip is
+   the only thing on the page that says the admin surface exists at all, so it
+   should not shout. */
+.admin-strip{
+  margin:1.5rem auto 0; max-width:640px;
+  display:flex; align-items:center; gap:.35rem 1.1rem;
+  flex-wrap:wrap; justify-content:center;
+  padding:.75rem 1rem;
+  border:1px dashed var(--line); border-radius:12px;
+  background:rgba(157,123,47,.045);
+}
+.admin-tag{
+  font-size:.63rem; font-weight:600; letter-spacing:.15em;
+  text-transform:uppercase; color:var(--amber);
+}
+.admin-strip a{
+  font-size:.82rem; color:var(--ink-soft);
+  text-decoration:none; border-bottom:1px solid transparent;
+}
+.admin-strip a:hover{ color:var(--ink); border-bottom-color:var(--moss); }
+</style>
 </head>
 <body id="top">
 
@@ -263,7 +500,7 @@
     <a href="https://agrisync.tech/#about">About</a>
     <a href="https://agrisync.tech/#stack">Stack</a>
   </nav>
-  <a class="btn btn-glass" href="https://agrisync.tech/#connect">Connect</a>
+  <a class="btn btn-glass" data-ag-auth href="https://agrisync.tech/#connect">Connect</a>
 </header>
 
 <section class="section lead-section">
@@ -308,10 +545,19 @@
     </div>
 
     <div class="range reveal">
-      <a href="?hours=24"  class="{{ 'on' if hours == 24 }}">24 hours</a>
-      <a href="?hours=72"  class="{{ 'on' if hours == 72 }}">3 days</a>
-      <a href="?hours=168" class="{{ 'on' if hours == 168 }}">7 days</a>
-      <a href="{{ deeper.api_url }}" rel="nofollow">Full history →</a>
+      {% for r in ranges %}
+        {% if r.member and not member %}
+      {#- Still an <a> with a real href, so it looks and reads like the others.
+          data-ag-signin makes the widget swallow the click and open the modal
+          instead. Without that the link would still be harmless - the server
+          clamps the range back down for a stranger - but landing on the same
+          seven days with no explanation feels broken rather than gated. -#}
+      <a href="?hours={{ r.hours }}" class="locked" data-ag-signin>{{ r.label }}</a>
+        {% else %}
+      <a href="?hours={{ r.hours }}" class="{{ 'on' if hours == r.hours }}">{{ r.label }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if member %}<span class="member-chip">Full access</span>{% endif %}
     </div>
 
     <div class="grid g-charts reveal">
@@ -366,15 +612,174 @@
   </div>
 </section>
 
+
+<!-- ============================================ every reading ============ -->
 <section class="section">
   <div class="container">
-    <div class="connect reveal">
-      <h3>Beyond <span class="serif">{{ deeper.max_days }} days.</span></h3>
-      <p>{{ deeper.note }}</p>
-      <a class="btn btn-greenglass" href="{{ deeper.api_url }}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        Connect
+    <div class="section-head reveal">
+      <span class="eyebrow">The record</span>
+      <h2>Every reading, <span class="serif">as it landed.</span></h2>
+      <p class="lede">
+        {%- if member and span.available %}
+          {{ "{:,}".format(span.readings) }} readings since {{ span.since }}.
+        {%- else %}
+          One row per minute, straight from the station.
+        {%- endif -%}
+      </p>
+    </div>
+
+    <div class="card lockable reveal" style="padding:0;overflow:hidden">
+      <div class="lock-body">
+        <div class="rt-wrap">
+          <table class="rt">
+            <thead>
+              <tr><th>Time</th><th>Air</th><th>Humidity</th>
+                  <th>Dew point</th><th>Leaf</th></tr>
+            </thead>
+            <tbody>
+            {% for r in table %}
+              <tr>
+                <td class="t">{{ r.when }}</td>
+                <td>{% if r.air is not none %}{{ r.air|round(1) }} °C{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td>{% if r.hum is not none %}{{ r.hum|round(0)|int }} %{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td>{% if r.dew is not none %}{{ r.dew|round(1) }} °C{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td>{% if r.wet is not none %}{{ r.wet|round(0)|int }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+
+          <!-- Only drawn for a stranger, and only ever grey bars. -->
+          <div class="only-out">
+            {% for _ in range(7) %}
+            <div class="skel-row"><span></span><span></span><span></span><span></span><span></span></div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="lock-veil">
+        <div class="lock-card">
+          <span class="lock-eyebrow">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 10V8a6 6 0 0 1 12 0v2h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V11a1 1 0 0 1 1-1zm2 0h8V8a4 4 0 0 0-8 0z"/></svg>
+            Members
+          </span>
+          <h4>
+            {%- if span.available and span.extra_days > 0 -%}
+              Another <em>{{ span.extra_days }} days</em> of this.
+            {%- else -%}
+              The <em>whole table.</em>
+            {%- endif -%}
+          </h4>
+          <p>
+            {%- if span.available -%}
+              Every one of the {{ "{:,}".format(span.readings) }} readings taken
+              since {{ span.since }}, sortable, alongside the canopy photographs.
+            {%- else -%}
+              The complete record, alongside the canopy photographs.
+            {%- endif -%}
+          </p>
+          <button class="btn btn-greenglass" data-ag-signin type="button">
+            Sign in with Google
+          </button>
+          <ul class="lock-includes">
+            <li>The full table, every reading since the station went up</li>
+            <li>The raw CSV, yours to download</li>
+            <li>The canopy photographs, on request</li>
+          </ul>
+          <span class="lock-foot">Free. Your name and email, nothing else.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================ the canopy =============== -->
+<section class="section">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">From the canopy</span>
+      <h2>What the camera <span class="serif">sees.</span></h2>
+      <p class="lede">A photograph of the same leaves, every fifteen minutes,
+        through the season.</p>
+    </div>
+
+    <div class="card lockable reveal">
+      <div class="lock-body">
+        <div class="img-grid">
+          {% for _ in range(12) %}<div class="img-cell"></div>{% endfor %}
+        </div>
+      </div>
+
+      <div class="lock-veil">
+        <div class="lock-card">
+          <span class="lock-eyebrow">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 10V8a6 6 0 0 1 12 0v2h1a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V11a1 1 0 0 1 1-1zm2 0h8V8a4 4 0 0 0-8 0z"/></svg>
+            Members
+          </span>
+          <h4>The field, <em>photographed.</em></h4>
+          <p>Sign in to ask for access to the canopy images. Requests are
+            approved by hand, usually the same day.</p>
+          <button class="btn btn-greenglass" data-ag-signin type="button">
+            Sign in with Google
+          </button>
+          <span class="lock-foot">Free. Your name and email, nothing else.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="only-in member-actions">
+      <a class="btn btn-greenglass" href="{{ links.photos }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16v14H4z"/><path d="M4 15l4-4 3 3 3-3 6 5"/></svg>
+        Canopy photographs
       </a>
+      <a class="btn btn-glass" href="{{ links.csv }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
+        Download the CSV
+      </a>
+    </div>
+
+    {#- ------------------------------------------------------------------
+        ADMIN ONLY.
+
+        is_admin is computed on the Pi from a signed cookie. For every other
+        visitor Jinja skips this block entirely, so none of it reaches the
+        browser - not hidden, not styled away, simply absent from the
+        response. There is nothing here for a stranger to find in View Source.
+
+        The endpoints behind these links check admin status again on their own.
+        That check, not this one, is what actually stops anybody reaching them.
+        -------------------------------------------------------------------#}
+    {% if is_admin %}
+    <div class="admin-strip">
+      <span class="admin-tag">Admin</span>
+      <a href="{{ links.visitors }}">Visitor register</a>
+      <a href="{{ links.zip }}">Download all images</a>
+      <a href="{{ links.photos }}">Manage &amp; delete</a>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="connect reveal foot-cta-social">
+      <h3>Built in the <span class="serif">open.</span></h3>
+      <p>A solar field station in Hapur, measuring cabbage microclimate at the
+        leaf. Notes, failures and progress as it goes up.</p>
+      <div style="display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap">
+        <a class="btn btn-greenglass"
+           href="https://www.linkedin.com/in/nikhil-siddhu-411406366"
+           target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9h4v12H3zM9 9h3.8v1.7h.05c.53-1 1.83-2.05 3.76-2.05C20.4 8.65 21 11 21 14.2V21h-4v-6c0-1.43-.03-3.27-2-3.27-2 0-2.3 1.56-2.3 3.17V21H9z"/></svg>
+          LinkedIn
+        </a>
+        <a class="btn btn-glass" href="https://x.com/" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.9 2H22l-7 8 8.2 12H16l-5-7.3L5.3 22H2l7.5-8.6L1.7 2H9l4.6 6.7zm-1.1 18h1.7L7.3 3.8H5.5z"/></svg>
+          X
+        </a>
+      </div>
     </div>
   </div>
 </section>
@@ -470,5 +875,372 @@
   },60000);
 })();
 </script>
+
+<!--
+  AgriSync sign-in widget.
+
+  PASTE THIS WHOLE BLOCK immediately before </body> in:
+      Agrisync-website-main/index.html          (the static site)
+      ~/agrisync/dashboard/templates/index.html (the dashboard)
+
+  It is self-contained - no build step, no files to host. It finds your
+  existing "Connect" button and takes it over, so no other markup changes.
+
+  WHAT IT DOES
+    On load it asks the ingest host who you are. Signed out, the header
+    button reads "Sign in" and opens a modal. Signed in, it becomes a circle
+    with your initial and a dropdown.
+
+    The Google button inside the modal is Google's own, rendered by their
+    library. That is deliberate: a hand-drawn imitation is against their
+    branding rules, and people trust the real one more anyway.
+
+  WHY A POPUP AND NOT A REDIRECT
+    A redirect loses your place on the page and feels like leaving the site.
+    The popup closes and the header changes underneath it.
+-->
+
+<style>
+  /* ---------------------------------------------------------------- auth -- */
+  /* Uses your existing --paper / --ink / --green variables where they exist,
+     with fallbacks so this also works if pasted somewhere they do not. */
+
+  .ag-auth { position: relative; display: inline-flex; align-items: center; }
+
+  /* Signed-out button. Matches your .btn sizing but with a real border, so it
+     reads as an action rather than another piece of frosted glass. */
+  .ag-signin {
+    display: inline-flex; align-items: center; gap: .5rem;
+    padding: .7rem 1.25rem; border-radius: 999px;
+    border: 1.5px solid var(--ink, #20271f);
+    background: var(--ink, #20271f); color: var(--paper, #f4f2ec);
+    font: inherit; font-size: .78rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    cursor: pointer; white-space: nowrap;
+    transition: transform .25s cubic-bezier(.22,1,.36,1), opacity .25s ease;
+  }
+  .ag-signin:hover { opacity: .88; }
+  .ag-signin:active { transform: scale(.96); }
+
+  /* Signed-in avatar */
+  .ag-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 1.5px solid var(--ink, #20271f);
+    background: var(--green, #3f5e39); color: var(--paper, #f4f2ec);
+    font: inherit; font-size: 15px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+    transition: transform .25s cubic-bezier(.22,1,.36,1);
+  }
+  .ag-avatar:hover { transform: scale(1.05); }
+  .ag-avatar:active { transform: scale(.96); }
+
+  /* Dropdown */
+  .ag-menu {
+    position: absolute; top: calc(100% + 12px); right: 0; z-index: 9000;
+    min-width: 244px; padding: 8px;
+    background: var(--card, #fbfaf6);
+    border: 1.5px solid var(--ink, #20271f);
+    border-radius: 16px;
+    box-shadow: 0 18px 40px rgba(30,40,25,.16);
+    opacity: 0; visibility: hidden; transform: translateY(-6px);
+    transition: opacity .18s ease, transform .18s ease, visibility .18s;
+  }
+  .ag-menu.open { opacity: 1; visibility: visible; transform: translateY(0); }
+  .ag-who {
+    padding: 10px 12px 12px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--line, #e4e1d6);
+  }
+  .ag-who b {
+    display: block; font-size: 14.5px; font-weight: 600;
+    color: var(--ink, #20271f); text-transform: none; letter-spacing: 0;
+  }
+  .ag-who span {
+    display: block; font-size: 12.5px; color: var(--ink-soft, #5f655a);
+    margin-top: 2px; word-break: break-all;
+  }
+  .ag-who .ag-tag {
+    display: inline-block; margin-top: 8px; padding: 2px 9px;
+    border-radius: 999px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase;
+    background: var(--green, #3f5e39); color: var(--paper, #f4f2ec);
+  }
+  .ag-menu a, .ag-menu button.ag-item {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 9px 12px; border: 0; border-radius: 10px; background: none;
+    font: inherit; font-size: 14px; font-weight: 500; text-align: left;
+    color: var(--ink, #20271f); text-decoration: none; cursor: pointer;
+    text-transform: none; letter-spacing: 0;
+  }
+  .ag-menu a:hover, .ag-menu button.ag-item:hover { background: var(--paper, #f4f2ec); }
+  .ag-menu .ag-out { color: #9c3b2e; }
+  .ag-sep { height: 1px; margin: 6px 4px; background: var(--line, #e4e1d6); }
+
+  /* Modal */
+  .ag-backdrop {
+    position: fixed; inset: 0; z-index: 9998;
+    background: rgba(24,28,22,.42);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    opacity: 0; visibility: hidden; transition: opacity .22s ease, visibility .22s;
+  }
+  .ag-backdrop.open { opacity: 1; visibility: visible; }
+  .ag-modal {
+    position: relative; width: 100%; max-width: 400px;
+    background: var(--card, #fbfaf6);
+    border: 1.5px solid var(--ink, #20271f);
+    border-radius: 22px; padding: 38px 34px 30px;
+    box-shadow: 0 30px 70px rgba(20,28,18,.28);
+    transform: translateY(10px) scale(.98);
+    transition: transform .28s cubic-bezier(.22,1,.36,1);
+    text-align: center;
+  }
+  .ag-backdrop.open .ag-modal { transform: translateY(0) scale(1); }
+  .ag-close {
+    position: absolute; top: 14px; right: 14px;
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1.5px solid var(--ink, #20271f); background: none;
+    color: var(--ink, #20271f); font-size: 15px; line-height: 1;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ag-close:hover { background: var(--paper, #f4f2ec); }
+  .ag-modal h3 {
+    margin: 0 0 8px; font-size: 23px; font-weight: 600;
+    letter-spacing: -.01em; color: var(--ink, #20271f);
+  }
+  .ag-modal h3 em {
+    font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+    color: var(--green, #3f5e39);
+  }
+  .ag-modal p {
+    margin: 0 0 22px; font-size: 14.5px; line-height: 1.55;
+    color: var(--ink-soft, #5f655a);
+  }
+  .ag-gbtn { display: flex; justify-content: center; min-height: 44px; }
+  .ag-fine {
+    margin: 20px 0 0; font-size: 11.5px; line-height: 1.5;
+    color: var(--ink-soft, #5f655a);
+  }
+  .ag-err {
+    margin: 14px 0 0; font-size: 13px; color: #9c3b2e; min-height: 18px;
+  }
+
+  @media (max-width: 640px) {
+    .ag-menu { right: -8px; min-width: 214px; }
+    .ag-modal { padding: 32px 24px 26px; }
+  }
+</style>
+
+<div class="ag-backdrop" id="agBackdrop" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="ag-modal">
+    <button class="ag-close" id="agClose" aria-label="Close">&times;</button>
+    <h3>See the <em>whole field.</em></h3>
+    <p>Sign in to open the full record, the daily breakdown and the canopy
+       images. Free, and it takes one click.</p>
+    <div class="ag-gbtn" id="agGoogleBtn"></div>
+    <p class="ag-err" id="agErr"></p>
+    <p class="ag-fine">
+      We receive your name and email address from Google, and nothing else.
+      No password is created and none is stored.
+    </p>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+(function () {
+  var API   = 'https://ingest.agrisync.tech';
+  var DASH  = 'https://dashboard.agrisync.tech';
+  var state = { signed_in: false };
+
+  var backdrop = document.getElementById('agBackdrop');
+  var errBox   = document.getElementById('agErr');
+  var mounted  = false;
+
+  /* ------------------------------------------------------------- helpers -- */
+
+  function api(path, options) {
+    // credentials:'include' is what carries the session cookie across
+    // subdomains. Without it the browser sends nothing and you are always
+    // signed out.
+    return fetch(API + path, Object.assign({ credentials: 'include' }, options || {}))
+      .then(function (r) { return r.json(); });
+  }
+
+  function openModal() {
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    errBox.textContent = '';
+    mountGoogle();
+  }
+  function closeModal() {
+    backdrop.classList.remove('open');
+    backdrop.setAttribute('aria-hidden', 'true');
+  }
+
+  document.getElementById('agClose').addEventListener('click', closeModal);
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) closeModal();      // click outside to dismiss
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  /* -------------------------------------------------------------- google -- */
+
+  function mountGoogle() {
+    if (mounted || !window.google || !window.google.accounts) return;
+
+    api('/auth/config').then(function (cfg) {
+      if (!cfg.client_id) {
+        errBox.textContent = 'Sign-in is not configured yet.';
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: cfg.client_id,
+        callback: onGoogle,
+        ux_mode: 'popup',
+        auto_select: false,
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('agGoogleBtn'),
+        { theme: 'outline', size: 'large', shape: 'pill',
+          text: 'continue_with', width: 300, logo_alignment: 'left' }
+      );
+      mounted = true;
+    }).catch(function () {
+      errBox.textContent = 'Cannot reach the server. Try again in a moment.';
+    });
+  }
+
+  function onGoogle(response) {
+    errBox.textContent = '';
+    api('/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    }).then(function (data) {
+      if (!data.ok) {
+        errBox.textContent = data.error || 'That sign-in did not work.';
+        return;
+      }
+      closeModal();
+      refresh();
+    }).catch(function () {
+      errBox.textContent = 'Could not reach the server.';
+    });
+  }
+
+  /* --------------------------------------------------------------- header -- */
+
+  function render(container) {
+    container.innerHTML = '';
+
+    if (!state.signed_in) {
+      var b = document.createElement('button');
+      b.className = 'ag-signin';
+      b.type = 'button';
+      b.textContent = 'Sign in';
+      b.addEventListener('click', openModal);
+      container.appendChild(b);
+      return;
+    }
+
+    var av = document.createElement('button');
+    av.className = 'ag-avatar';
+    av.type = 'button';
+    av.textContent = state.initial || '·';
+    av.setAttribute('aria-label', 'Account');
+
+    var menu = document.createElement('div');
+    menu.className = 'ag-menu';
+    menu.innerHTML =
+      '<div class="ag-who"><b>' + esc(state.name || 'Signed in') + '</b>' +
+      '<span>' + esc(state.email) + '</span>' +
+      (state.is_admin ? '<span class="ag-tag">Admin</span>'
+                      : (state.is_granted ? '<span class="ag-tag">Full access</span>' : '')) +
+      '</div>' +
+      '<a href="' + DASH + '">Dashboard</a>' +
+      '<a href="' + API + '/photos">Field images</a>' +
+      (state.is_granted ? '<a href="' + API + '/export/readings.csv">Download data</a>' : '') +
+      '<div class="ag-sep"></div>' +
+      '<button class="ag-item ag-out" type="button" id="agOut">Sign out</button>';
+
+    av.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menu.classList.toggle('open');
+    });
+    document.addEventListener('click', function () { menu.classList.remove('open'); });
+    menu.addEventListener('click', function (e) { e.stopPropagation(); });
+
+    container.appendChild(av);
+    container.appendChild(menu);
+
+    menu.querySelector('#agOut').addEventListener('click', function () {
+      api('/auth/logout', { method: 'POST' }).then(function () {
+        if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+        refresh();
+      });
+    });
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;',
+               '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* Take over the existing Connect button wherever it appears, and give any
+     "log in to see more" prompts on the page a working click. */
+  function slots() {
+    var found = [];
+
+    document.querySelectorAll('.header-cta, [data-ag-auth]').forEach(function (el) {
+      if (el.classList.contains('ag-auth')) { found.push(el); return; }
+      var box = document.createElement('div');
+      box.className = 'ag-auth';
+      el.parentNode.replaceChild(box, el);
+      found.push(box);
+    });
+
+    return found;
+  }
+
+  var containers = null;
+
+  function refresh() {
+    api('/auth/me').then(function (data) {
+      state = data || { signed_in: false };
+      if (!containers) containers = slots();
+      containers.forEach(render);
+      document.body.classList.toggle('ag-in', !!state.signed_in);
+      document.body.classList.toggle('ag-out-state', !state.signed_in);
+      // Anything on the page that wants to react to sign-in can listen.
+      document.dispatchEvent(new CustomEvent('ag:auth', { detail: state }));
+    }).catch(function () {
+      // API unreachable. Show the signed-out state rather than an error - the
+      // marketing site should still work if the Pi is off.
+      state = { signed_in: false };
+      if (!containers) containers = slots();
+      containers.forEach(render);
+    });
+  }
+
+  // Any element with data-ag-signin opens the modal. Use it on the blurred
+  // "see the full history" prompts.
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest && e.target.closest('[data-ag-signin]');
+    if (t) { e.preventDefault(); openModal(); }
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refresh);
+  } else {
+    refresh();
+  }
+})();
+</script>
+
 </body>
 </html>

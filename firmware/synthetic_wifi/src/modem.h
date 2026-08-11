@@ -41,6 +41,25 @@
 
 #include <Arduino.h>
 #include "mbedtls/md.h"
+#include "mbedtls/base64.h"
+
+/*
+ * Images go over the wire base64 encoded. Measured, not assumed: a JPEG sent
+ * raw through AT+HTTPDATA arrives with the SAME byte count and a valid JPEG
+ * header, but a different hash - so the modem is substituting byte values in
+ * flight, not dropping them. JSON readings never hit this because they are
+ * plain ASCII.
+ *
+ * Base64 puts the image in that same safe character set. It costs 33% more
+ * data (a 45KB image becomes 60KB, roughly 5.5MB/day at 15 minute intervals)
+ * which is nothing on a data SIM, and it removes a whole class of problem.
+ *
+ * Encoded in 3072-byte chunks. That is a multiple of 3, so each chunk encodes
+ * cleanly with no padding until the last one, and the pieces concatenate to
+ * exactly base64(whole image). Chunking keeps a 60KB string off the heap.
+ */
+#define B64_CHUNK_IN  3072
+#define B64_CHUNK_OUT 4100
 
 #ifndef MODEM_TRACE
 #define MODEM_TRACE 0
@@ -309,6 +328,156 @@ public:
     return status;
   }
 
+  /*
+   * POST raw bytes - used for JPEGs from the camera.
+   *
+   * Separate from postJson because Arduino's String is null-terminated and
+   * cannot hold binary safely: a JPEG containing a zero byte would be
+   * silently truncated.
+   *
+   * The signature covers "<ts>." followed by the raw bytes, exactly as for a
+   * JSON body, so the server needs only one verification path.
+   *
+   * Put the filename in the query string of `path`. This firmware can only
+   * carry one custom header reliably and the signature has it.
+   */
+  int postBinary(const char *host, const char *path,
+                 const uint8_t *data, size_t len, const char *hmacSecret) {
+    long ts = syncTime();
+    if (!ts) { trace("--", "no clock, cannot sign"); return -2; }
+
+    // Base64 length is deterministic, so the modem can be told the size
+    // without encoding anything first.
+    size_t b64len = ((len + 2) / 3) * 4;
+
+    char pfx[24];
+    int pfxLen = snprintf(pfx, sizeof(pfx), "%ld.", ts);
+
+    /*
+     * The signature covers what actually goes on the wire - the base64 text,
+     * not the raw image. Signing the transmitted bytes means any alteration
+     * in flight is caught, which is the whole point after today.
+     *
+     * Encoded twice: once to hash, once to send. Encoding is cheap and this
+     * keeps a 60KB buffer off a heap that is already holding the image.
+     */
+    uint8_t enc[B64_CHUNK_OUT];
+    size_t olen;
+
+    mbedtls_md_context_t ctx;
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, info, 1);
+    mbedtls_md_hmac_starts(&ctx, (const unsigned char *)hmacSecret,
+                           strlen(hmacSecret));
+    mbedtls_md_hmac_update(&ctx, (const unsigned char *)pfx, pfxLen);
+
+    for (size_t off = 0; off < len; off += B64_CHUNK_IN) {
+      size_t n = (len - off > B64_CHUNK_IN) ? B64_CHUNK_IN : (len - off);
+      if (mbedtls_base64_encode(enc, sizeof(enc), &olen, data + off, n) != 0) {
+        mbedtls_md_free(&ctx);
+        trace("--", "base64 encode failed");
+        return -1;
+      }
+      mbedtls_md_hmac_update(&ctx, enc, olen);
+    }
+
+    byte mac[32];
+    mbedtls_md_hmac_finish(&ctx, mac);
+    mbedtls_md_free(&ctx);
+
+    char hex[65];
+    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", mac[i]);
+    hex[64] = 0;
+    String hdr = String(ts) + "." + String(hex);
+
+    char buf[256];
+
+    at("AT+HTTPTERM", 3000);
+    if (!at("AT+HTTPINIT", 8000)) {
+      delay(1000);
+      if (!at("AT+HTTPINIT", 8000)) return -1;
+    }
+
+    // enc=b64 tells the server to decode before storing. Explicit rather than
+    // implied, so a raw upload from curl still works for testing.
+    snprintf(buf, sizeof(buf),
+             "AT+HTTPPARA=\"URL\",\"http://%s%s&enc=b64\"", host, path);
+    if (!at(buf, 5000)) { at("AT+HTTPTERM", 3000); return -1; }
+
+    at("AT+HTTPPARA=\"CONTENT\",\"text/plain\"", 5000);
+
+    String h = "AT+HTTPPARA=\"USERDATA\",\"X-Sig: " + hdr + "\"";
+    at(h.c_str(), 5000);
+
+    /*
+     * 60000, not higher. The <time> argument to AT+HTTPDATA has a ceiling on
+     * this firmware: 60000 is accepted, 90000 is rejected outright and the
+     * modem never sends the DOWNLOAD prompt. Measured the hard way.
+     *
+     * 60 seconds is ample - 31KB at 115200 takes under three.
+     */
+    if (b64len > 60000) {
+      // Refuse clearly rather than failing at the prompt with no explanation.
+      // AT+HTTPDATA also has a body size ceiling around 64KB. If this fires,
+      // lower the JPEG quality in the camera's frame2jpg() call.
+      trace("--", "encoded body too large for AT+HTTPDATA");
+      at("AT+HTTPTERM", 3000);
+      return -3;
+    }
+
+    snprintf(buf, sizeof(buf), "AT+HTTPDATA=%u,60000", (unsigned)b64len);
+    trace(">>", buf);
+    _s.print(buf); _s.print("\r\n");
+    if (!waitFor("DOWNLOAD", 15000)) {
+      trace("--", "no DOWNLOAD prompt");
+      at("AT+HTTPTERM", 3000);
+      return -1;
+    }
+
+    // Second encode pass, straight out to the modem.
+    for (size_t off = 0; off < len; off += B64_CHUNK_IN) {
+      size_t n = (len - off > B64_CHUNK_IN) ? B64_CHUNK_IN : (len - off);
+      mbedtls_base64_encode(enc, sizeof(enc), &olen, data + off, n);
+
+      size_t sent = 0;
+      while (sent < olen) {
+        size_t w = (olen - sent > 512) ? 512 : (olen - sent);
+        _s.write(enc + sent, w);
+        sent += w;
+        delay(2);
+      }
+    }
+    _s.flush();
+
+    String tmp;
+    if (!readUntil("OK", tmp, 30000)) {
+      trace("--", "body not accepted");
+      at("AT+HTTPTERM", 3000);
+      return -1;
+    }
+    settle();
+
+    trace(">>", "AT+HTTPACTION=1");
+    String resp;
+    _s.print("AT+HTTPACTION=1"); _s.print("\r\n");
+    if (!readUntil("+HTTPACTION:", resp, 90000)) {
+      at("AT+HTTPTERM", 3000);
+      return -1;
+    }
+    readRestOfLine(resp, 5000);
+    trace("<<", resp);
+
+    int status = -1;
+    int i  = resp.indexOf("+HTTPACTION:");
+    int c1 = resp.indexOf(',', i);
+    int c2 = resp.indexOf(',', c1 + 1);
+    if (c1 > 0 && c2 > c1) status = resp.substring(c1 + 1, c2).toInt();
+
+    at("AT+HTTPTERM", 5000);
+    return status;
+  }
+
   void sleep() { at("AT+CSCLK=1", 2000); }
   void wake()  { at("AT+CSCLK=0", 2000); }
 
@@ -327,6 +496,29 @@ private:
     mbedtls_md_setup(&ctx, info, 1);            // 1 = HMAC mode
     mbedtls_md_hmac_starts(&ctx, (const unsigned char *)key, strlen(key));
     mbedtls_md_hmac_update(&ctx, (const unsigned char *)msg.c_str(), msg.length());
+    mbedtls_md_hmac_finish(&ctx, out);
+    mbedtls_md_free(&ctx);
+
+    char hex[65];
+    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", out[i]);
+    hex[64] = 0;
+    return String(hex);
+  }
+
+  /* HMAC over two buffers without joining them. Used by postBinary so a
+     30KB image never has to be duplicated in RAM just to be signed. */
+  static String hmacHex2(const char *key,
+                         const uint8_t *a, size_t alen,
+                         const uint8_t *b, size_t blen) {
+    byte out[32];
+    mbedtls_md_context_t ctx;
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, info, 1);
+    mbedtls_md_hmac_starts(&ctx, (const unsigned char *)key, strlen(key));
+    mbedtls_md_hmac_update(&ctx, a, alen);
+    mbedtls_md_hmac_update(&ctx, b, blen);
     mbedtls_md_hmac_finish(&ctx, out);
     mbedtls_md_free(&ctx);
 

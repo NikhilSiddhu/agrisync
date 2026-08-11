@@ -29,13 +29,40 @@ MAX_PUBLIC_HOURS = 7 * 24
 API_URL = os.getenv("API_PUBLIC_URL", "https://api.agrisync.tech")
 
 
-def clamp(hours):
-    """Never return more than the public window, whatever was asked for."""
+# What a signed-in visitor may ask for. Two years is far past "everything" for
+# a station that went up this season, so in practice it is no limit at all. It
+# exists so that a crafted ?hours=999999999 cannot ask Mongo for a scan that
+# never finishes.
+MAX_MEMBER_HOURS = 2 * 365 * 24
+
+DEFAULT_HOURS = MAX_PUBLIC_HOURS
+
+# Offered in the range picker. The member ones are drawn locked rather than
+# hidden: a range you can see but cannot yet use is an invitation, and one you
+# cannot see at all is nothing.
+RANGES = [
+    {"hours": 24,    "label": "24 hours", "member": False},
+    {"hours": 72,    "label": "3 days",   "member": False},
+    {"hours": 168,   "label": "7 days",   "member": False},
+    {"hours": 720,   "label": "30 days",  "member": True},
+    {"hours": 2160,  "label": "90 days",  "member": True},
+    {"hours": 17520, "label": "Everything", "member": True},
+]
+
+
+def clamp(hours, member=False):
+    """How far back this visitor may look.
+
+    The ceiling is decided here, from a signed cookie, and never from anything
+    the browser can set. A stranger who edits ?hours= in the address bar gets
+    the public window back rather than more data.
+    """
+    ceiling = MAX_MEMBER_HOURS if member else MAX_PUBLIC_HOURS
     try:
         hours = int(hours)
     except (TypeError, ValueError):
-        return MAX_PUBLIC_HOURS
-    return max(1, min(hours, MAX_PUBLIC_HOURS))
+        return min(DEFAULT_HOURS, ceiling)
+    return max(1, min(hours, ceiling))
 
 _client = None
 
@@ -224,3 +251,91 @@ def healthy():
         return True
     except Exception:
         return False
+
+
+# ============================================================= members ======
+
+# One page of readings is plenty on screen and keeps the HTML small. For bulk,
+# the CSV export is the right tool and it already exists.
+TABLE_LIMIT = 500
+
+# What a stranger sees above the fade. Real readings, just not many - the top
+# of a real table, cut off. Not invented rows: fake numbers on a page whose
+# whole claim is "these are real measurements" would be a bad trade for a
+# slightly fuller-looking screenshot.
+TABLE_PUBLIC = 5
+
+
+def table(hours=MAX_PUBLIC_HOURS, limit=TABLE_LIMIT):
+    """Recent readings, newest first.
+
+    Suspect rows are excluded exactly as the charts exclude them. A reading of
+    179 degrees is a sensor glitch, not data, and putting it in a tidy table
+    lends it a credibility it has not earned.
+    """
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    rows = _db().readings.find(
+        {"ts": {"$gte": since}, "quality_flags": {"$exists": False}},
+        {"_id": 0, "ts": 1, "air_temp_c": 1, "humidity_pct": 1,
+         "dew_point_c": 1, "leaf_wetness": 1, "pressure_hpa": 1},
+    ).sort("ts", -1).limit(int(limit))
+
+    out = []
+    for r in rows:
+        ts = r.get("ts")
+        if ts and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        out.append({
+            "when": ts.astimezone().strftime("%d %b, %H:%M") if ts else "\u2014",
+            "air": r.get("air_temp_c"),
+            "hum": r.get("humidity_pct"),
+            "dew": r.get("dew_point_c"),
+            "wet": r.get("leaf_wetness"),
+            "pres": r.get("pressure_hpa"),
+        })
+    return out
+
+
+def span():
+    """How much record exists, for the copy on the locked panels.
+
+    "Another 23 days of this" is a reason to sign in. "Sign in for more" is
+    not, because it never says how much more and the honest answer might be
+    none. So the number is read from the database rather than asserted.
+    """
+    try:
+        first = _db().readings.find_one({}, {"ts": 1, "_id": 0},
+                                        sort=[("ts", 1)])
+        total = _db().readings.estimated_document_count()
+    except Exception:
+        return {"available": False}
+
+    if not first or not first.get("ts"):
+        return {"available": False}
+
+    ts = first["ts"]
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+
+    days = max(1, (datetime.now(timezone.utc) - ts).days)
+    return {
+        "available": True,
+        "total_days": days,
+        # What signing in actually buys. While the station is younger than the
+        # public window this is 0, and the template says something else rather
+        # than promising data that does not exist yet.
+        "extra_days": max(0, days - MAX_PUBLIC_HOURS // 24),
+        "readings": total,
+        "since": ts.astimezone().strftime("%d %B %Y"),
+    }
+
+
+def photo_count():
+    """How many canopy images exist, for the locked images panel."""
+    import os as _os
+    from pathlib import Path as _Path
+    d = _Path(_os.getenv("PHOTO_DIR", "data/canopy")).expanduser()
+    if not d.is_dir():
+        return 0
+    return sum(1 for p in d.iterdir()
+               if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png"))

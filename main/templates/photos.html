@@ -1,0 +1,262 @@
+{# Canopy gallery.  Goes at:  ~/agrisync/main/templates/photos.html
+
+   States: granted / pending / request / anonymous / unconfigured.
+   Admins additionally get select, delete and download-all.
+
+   Self-contained CSS and JS so the whole feature is this template plus
+   src/api/photos.py, removable in one commit. #}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgriSync — Canopy</title>
+<style>
+  :root {
+    --paper: #f4f3ee;
+    --card:  #fbfaf7;
+    --ink:   #1c1c1a;
+    --muted: #6b6b63;
+    --line:  #e0ded6;
+    --green: #4a6b3a;
+    --red:   #9c3b2e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55;
+  }
+  header {
+    padding: 28px 24px 22px; border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  .eyebrow {
+    font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--green); font-weight: 600; margin-bottom: 8px;
+  }
+  h1 { margin: 0; font-size: 30px; font-weight: 600; letter-spacing: -.01em; }
+  h1 em { font-family: Georgia, "Times New Roman", serif; color: var(--green); }
+  .sub { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+  .pill {
+    display: inline-block; margin-top: 14px; margin-right: 8px;
+    padding: 5px 13px; background: var(--paper); border: 1px solid var(--line);
+    border-radius: 999px; font-size: 13px; color: var(--muted);
+  }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 24px 90px; }
+
+  /* admin toolbar */
+  .bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 14px; margin-bottom: 18px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .bar .spacer { flex: 1; }
+  .bar .count { font-size: 13px; color: var(--muted); }
+  button, .btn {
+    padding: 8px 15px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--paper); color: var(--ink); font: inherit; font-size: 13.5px;
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  button:hover, .btn:hover { background: #efeee8; }
+  .btn-primary {
+    background: var(--green); border-color: var(--green); color: #fff;
+    font-weight: 600;
+  }
+  .btn-primary:hover { opacity: .92; background: var(--green); }
+  .btn-danger { color: var(--red); border-color: #dcc4bf; }
+  .btn-danger:hover { background: #f7ecea; }
+  .btn-danger[disabled] { opacity: .4; cursor: not-allowed; }
+
+  .grid {
+    display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  }
+  figure {
+    margin: 0; background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; position: relative;
+  }
+  figure.picked { border-color: var(--green); box-shadow: 0 0 0 2px var(--green); }
+  figure a { display: block; line-height: 0; background: #e8e6df; }
+  figure img { width: 100%; height: 172px; object-fit: cover; display: block; }
+  figcaption {
+    padding: 9px 11px; font-size: 12px; color: var(--muted);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  figcaption b { color: var(--ink); font-weight: 500; }
+  .tick {
+    position: absolute; top: 9px; left: 9px; width: 20px; height: 20px;
+    cursor: pointer; accent-color: var(--green);
+  }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 34px; max-width: 620px; margin: 22px auto;
+  }
+  .panel h2 { margin: 0 0 12px; font-size: 21px; font-weight: 600; }
+  .panel p { margin: 0 0 14px; color: var(--muted); font-size: 14.5px; }
+  .who {
+    display: inline-block; padding: 4px 11px; background: var(--paper);
+    border: 1px solid var(--line); border-radius: 6px;
+    font-size: 13px; color: var(--ink);
+  }
+  textarea {
+    width: 100%; min-height: 92px; margin-top: 8px; padding: 11px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+    font: inherit; font-size: 14px; color: var(--ink); resize: vertical;
+  }
+  .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    background: #c8912e; margin-right: 8px; vertical-align: 1px;
+  }
+  .note {
+    margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--muted);
+  }
+  code {
+    display: inline-block; margin-top: 10px; padding: 9px 13px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 6px; font-size: 12.5px; color: var(--ink);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Canopy imaging</div>
+    <h1>Hapur station, <em>looking down.</em></h1>
+    <p class="sub">Cabbage canopy, photographed by Board B and sent over cellular.</p>
+    {% if state == 'granted' and photos %}
+      <span class="pill">{{ total }} image{{ '' if total == 1 else 's' }}</span>
+      <span class="pill">{{ total_mb }} MB</span>
+    {% endif %}
+  </div>
+</header>
+
+<main>
+
+{% if state == 'granted' %}
+  {% if photos %}
+
+    {% if is_admin %}
+    <form method="post" action="{{ url_for('photos.delete') }}" id="picks"
+          onsubmit="return confirmDelete();">
+      <div class="bar">
+        <button type="button" onclick="pickAll(true)">Select all</button>
+        <button type="button" onclick="pickAll(false)">Clear</button>
+        <span class="count" id="picked">none selected</span>
+        <span class="spacer"></span>
+        <a class="btn btn-primary" href="{{ url_for('photos.download_all') }}">
+          Download all ({{ total_mb }} MB)
+        </a>
+        <button type="submit" class="btn-danger" id="del" disabled>
+          Delete selected
+        </button>
+      </div>
+    {% endif %}
+
+    <div class="grid">
+    {% for p in photos %}
+      <figure id="fig-{{ loop.index }}">
+        {% if is_admin %}
+          <input class="tick" type="checkbox" name="name" value="{{ p.name }}"
+                 form="picks" onchange="refresh()" title="Select">
+        {% endif %}
+        <a href="{{ url_for('photos.image', name=p.name) }}" target="_blank" rel="noopener">
+          <img src="{{ url_for('photos.image', name=p.name) }}"
+               alt="Canopy image {{ p.name }}" loading="lazy">
+        </a>
+        <figcaption><b>{{ p.shown_at }}</b><span>{{ p.kb }} KB</span></figcaption>
+      </figure>
+    {% endfor %}
+    </div>
+
+    {% if is_admin %}</form>{% endif %}
+
+    <p class="note">
+      Captured at 800&times;600 in RGB565 and encoded to JPEG on the board — the
+      sensor fitted is a GC2145, which cannot produce JPEG in hardware. Each
+      image is written to the SD card first, then sent to Board A over UART and
+      posted through the modem, signed. Signed in as {{ email }}{% if is_admin %} (admin){% endif %}.
+    </p>
+  {% else %}
+    <div class="panel">
+      <h2>Nothing here yet</h2>
+      <p>Images arrive from the field box a few minutes after each capture.
+         If the box has been offline they queue on its SD card and upload in
+         batches when it reconnects.</p>
+    </div>
+  {% endif %}
+
+{% elif state == 'pending' %}
+  <div class="panel">
+    <h2><span class="dot"></span>Waiting on approval</h2>
+    <p>Your request has been sent and Nikhil has been notified. You'll see the
+       images here once it's approved — no need to ask again.</p>
+    <span class="who">{{ email }}</span>
+  </div>
+
+{% elif state == 'request' %}
+  <div class="panel">
+    <h2>Ask to see the field</h2>
+    <p>These are photographs from a working research station, so access is
+       granted by hand rather than being open. Same as the raw dataset.</p>
+    <p><span class="who">{{ email }}</span></p>
+    <form method="post" action="{{ url_for('photos.ask') }}">
+      <label for="note" style="font-size:14px;">What are you hoping to use them for? (optional)</label>
+      <textarea id="note" name="note" placeholder="A sentence is plenty."></textarea>
+      <button type="submit" class="btn-primary" style="margin-top:14px;">Request access</button>
+    </form>
+  </div>
+
+{% elif state == 'anonymous' %}
+  <div class="panel">
+    <h2>Sign in first</h2>
+    <p>This page sits behind Cloudflare Access. If you're seeing this, the
+       sign-in didn't complete — reload and you should get the email code prompt.</p>
+  </div>
+
+{% else %}
+  <div class="panel">
+    <h2>Access is not configured</h2>
+    <p>Cloudflare Access isn't set up on this host, so the page can't tell who
+       you are and won't guess. Set <b>CF_ACCESS_TEAM_DOMAIN</b> and
+       <b>CF_ACCESS_AUD</b> in <code>.env</code>.</p>
+  </div>
+{% endif %}
+
+</main>
+
+{% if state == 'granted' and photos and is_admin %}
+<script>
+  function ticks() {
+    return Array.from(document.querySelectorAll('input.tick'));
+  }
+  function refresh() {
+    const on = ticks().filter(t => t.checked);
+    document.getElementById('picked').textContent =
+      on.length ? on.length + ' selected' : 'none selected';
+    document.getElementById('del').disabled = on.length === 0;
+    ticks().forEach(t => t.closest('figure').classList.toggle('picked', t.checked));
+  }
+  function pickAll(state) {
+    ticks().forEach(t => { t.checked = state; });
+    refresh();
+  }
+  function confirmDelete() {
+    const n = ticks().filter(t => t.checked).length;
+    if (!n) return false;
+    // Deleting is final. There is no bin, and the copy on the camera's SD card
+    // only lasts until the card wraps.
+    return confirm('Delete ' + n + ' image' + (n === 1 ? '' : 's') +
+                   ' permanently?\n\nThis cannot be undone.');
+  }
+  refresh();
+</script>
+{% endif %}
+
+</body>
+</html>

@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Dashboard | AgriSync</title>
+<meta name="description" content="Live field data from the AgriSync station in {{ site.name }}, {{ site.region }} — cabbage microclimate measured at the leaf, every minute."/>
+<meta name="theme-color" content="#f4f2ec"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233f5e39'><path d='M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z'/></svg>"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  /* Tokens lifted verbatim from agrisync.tech so the two never drift. */
+  :root{
+    --paper:#f4f2ec; --card:#fbfaf6; --line:#e4e1d6;
+    --ink:#20271f; --ink-soft:#5f655a;
+    --green:#3f5e39; --green-deep:#26331f; --moss:#5c7340; --forest:#3b4738;
+    --amber:#9d7b2f; --rust:#96483c;
+    --r:18px; --maxw:1080px;
+    --shadow:0 1px 2px rgba(30,40,25,.04), 0 14px 34px rgba(30,40,25,.06);
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;}
+  body{margin:0;font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    color:var(--ink);background:var(--paper);font-size:1.0625rem;line-height:1.7;
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+    overflow-x:hidden;cursor:default;}
+  @media (prefers-reduced-motion:no-preference){body{animation:fadeIn .6s ease both;}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  /* ── Ground texture ──────────────────────────────────────────────────────
+     Three fixed, pointer-events:none layers behind everything. Because they
+     are position:fixed and never animate, the compositor rasterises each once
+     and simply holds it — scrolling costs nothing extra. No background-attachment
+     (janky on iOS), no blend modes (expensive on mobile GPUs at full-viewport),
+     no filters. Measured cost: three static layers, no paint on scroll.
+     ──────────────────────────────────────────────────────────────────────── */
+
+  /* 1 · Light bloom and colour depth, same top wash as the main site. */
+  body::before{content:"";position:fixed;inset:0;z-index:-2;pointer-events:none;
+    background:
+      radial-gradient(100% 55% at 50% 0%, rgba(255,255,255,.55), transparent 55%),
+      radial-gradient(72% 52% at 6% 10%, rgba(92,115,64,.11), transparent 62%),
+      radial-gradient(62% 46% at 96% 20%, rgba(157,123,47,.075), transparent 60%),
+      radial-gradient(96% 62% at 50% 104%, rgba(63,94,57,.10), transparent 64%);}
+
+  /* 2 · Paper grain, and furrows running across the page like ploughed rows.
+     Both faint enough that you feel them rather than see them. */
+  body::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.62;
+    background-image:
+      repeating-linear-gradient(101deg,
+        rgba(63,94,57,.030) 0 1px, transparent 1px 52px),
+      repeating-linear-gradient(101deg,
+        rgba(63,94,57,.016) 0 1px, transparent 1px 13px),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.34'/%3E%3C/svg%3E");
+    background-size:auto,auto,180px 180px;}
+
+  /* Phones get the colour and the grain but not the furrows — one less layer
+     to rasterise on a weaker GPU, and they read as noise at that width anyway. */
+  @media (max-width:640px){
+    body::after{background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.3'/%3E%3C/svg%3E");
+      background-size:180px 180px;opacity:.5;}}
+
+  /* A horizon: the page floor warms very slightly, as the main site's hero does. */
+  .horizon{position:fixed;left:0;right:0;bottom:0;height:34vh;z-index:-1;pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(92,115,64,.055));}
+
+  a{color:inherit;text-decoration:none;}
+  a,button,.btn,[role="button"]{cursor:pointer;}
+  ::selection{background:var(--green);color:#fff;}
+  :focus-visible{outline:2px solid var(--green);outline-offset:3px;border-radius:8px;}
+
+  .serif{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-style:italic;}
+  .container{width:100%;max-width:var(--maxw);margin:0 auto;padding:0 1.5rem;}
+  h1,h2,h3,h4{margin:0;font-weight:600;letter-spacing:-.02em;line-height:1.12;text-wrap:balance;}
+  p{margin:0;text-wrap:pretty;}
+  .eyebrow{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:var(--green);}
+  .lede{color:var(--ink-soft);font-size:1.125rem;line-height:1.65;}
+
+  .btn{display:inline-flex;align-items:center;gap:.5rem;padding:.85rem 1.4rem;
+    border-radius:999px;border:1px solid transparent;font-size:.78rem;font-weight:600;
+    letter-spacing:.08em;text-transform:uppercase;
+    transition:transform .3s cubic-bezier(.22,1,.36,1), background .3s ease, box-shadow .3s ease, color .3s ease;}
+  .btn svg{width:16px;height:16px;}
+  .btn:active{transform:scale(.96);}
+  .btn-glass{background:rgba(255,255,255,.45);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid rgba(255,255,255,.5);color:var(--ink);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.7), inset 0 -1px 0 rgba(0,0,0,.04), 0 6px 20px rgba(30,40,25,.08);}
+  .btn-glass:hover{background:rgba(255,255,255,.62);transform:translateY(-2px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.8), 0 12px 28px rgba(30,40,25,.12);}
+  .btn-greenglass{background:rgba(43,56,27,.7);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid rgba(255,255,255,.2);color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 8px 24px rgba(30,40,25,.2);}
+  .btn-greenglass:hover{background:rgba(43,56,27,.8);transform:translateY(-2px);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.3), 0 12px 30px rgba(30,40,25,.28);}
+
+  .header{position:fixed;top:1rem;left:50%;transform:translateX(-50%);
+    width:calc(100% - 1.5rem);max-width:var(--maxw);z-index:50;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:.55rem .55rem .55rem 1.2rem;border-radius:999px;
+    background:rgba(251,250,246,.5);
+    -webkit-backdrop-filter:blur(22px) saturate(180%);backdrop-filter:blur(22px) saturate(180%);
+    border:1px solid rgba(255,255,255,.55);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.65), 0 8px 30px rgba(30,40,25,.09);
+    transition:padding .35s cubic-bezier(.22,1,.36,1), background .35s ease, box-shadow .35s ease;}
+  .header.scrolled{padding-top:.42rem;padding-bottom:.42rem;background:rgba(251,250,246,.74);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.7), 0 12px 34px rgba(30,40,25,.14);}
+  .brand{display:inline-flex;align-items:center;gap:.55rem;font-weight:700;font-size:1.15rem;
+    letter-spacing:-.02em;color:var(--forest);transition:opacity .25s ease;}
+  .brand:hover{opacity:.72;}
+  .brand svg{width:22px;height:22px;color:var(--green);}
+  .nav{display:none;align-items:center;gap:1.6rem;}
+  .nav a{position:relative;font-size:.78rem;font-weight:500;color:var(--ink-soft);transition:color .25s ease;}
+  .nav a::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:1.5px;border-radius:2px;
+    background:var(--green);transform:scaleX(0);transition:transform .35s cubic-bezier(.22,1,.36,1);}
+  .nav a:hover{color:var(--green);} .nav a:hover::after{transform:scaleX(1);}
+  .header .btn{padding:.7rem 1.2rem;}
+  @media (min-width:900px){.nav{display:flex;}}
+
+  .scroll-progress{position:fixed;top:0;left:0;z-index:60;height:2px;width:100%;
+    transform:scaleX(0);transform-origin:0 50%;will-change:transform;pointer-events:none;
+    background:linear-gradient(90deg,var(--moss),var(--green));opacity:.9;}
+
+  .section{padding:clamp(3rem,7vw,5rem) 0;}
+  .lead-section{padding-top:clamp(7rem,14vw,10rem);}
+  .section-head{max-width:680px;margin:0 auto clamp(2rem,4vw,3rem);text-align:center;}
+  .section-head h2{font-size:clamp(1.9rem,4.4vw,3rem);margin-top:.85rem;}
+  .section-head h2 .serif{font-size:1.05em;color:var(--moss);}
+  .section-head .lede{margin-top:1rem;}
+  .section-head .eyebrow{display:inline-flex;align-items:center;gap:.65rem;}
+  .section-head .eyebrow::before,.section-head .eyebrow::after{content:"";width:22px;height:1px;
+    background:currentColor;opacity:.45;}
+
+  .grid{display:grid;gap:1.25rem;}
+  .g-metrics{grid-template-columns:repeat(2,1fr);}
+  .g-charts{grid-template-columns:1fr;}
+  @media (min-width:760px){.g-metrics{grid-template-columns:repeat(4,1fr);}}
+  @media (min-width:900px){.g-charts{grid-template-columns:repeat(2,1fr);}}
+
+  .card{position:relative;--mx:50%;--my:50%;
+    background:rgba(255,255,255,.55);border:1px solid var(--line);border-radius:var(--r);padding:1.7rem;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.6);
+    transition:transform .4s cubic-bezier(.22,1,.36,1), box-shadow .4s ease, border-color .4s ease, background .4s ease;}
+  .card:hover{transform:translateY(-5px);background:rgba(255,255,255,.8);
+    box-shadow:0 18px 40px rgba(30,40,25,.09);border-color:rgba(63,94,57,.22);}
+  .card::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+    background:radial-gradient(240px circle at var(--mx) var(--my), rgba(63,94,57,.12), transparent 62%);
+    opacity:0;transition:opacity .45s ease;}
+  .card:hover::after{opacity:1;}
+  .card .tag{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.13em;color:var(--green);}
+
+  .metric .n{display:block;font-size:clamp(1.9rem,5vw,2.6rem);font-weight:700;letter-spacing:-.03em;
+    color:var(--ink);line-height:1;margin-top:.55rem;font-variant-numeric:tabular-nums;
+    transition:color .3s ease;}
+  .metric:hover .n{color:var(--green);}
+  .metric .n .u{font-size:.44em;font-weight:600;color:var(--ink-soft);letter-spacing:0;}
+  .metric .l{display:block;margin-top:.45rem;font-size:.82rem;color:var(--ink-soft);}
+
+  .livepill{display:inline-flex;align-items:center;gap:.55rem;padding:.6rem 1.15rem;border-radius:999px;
+    font-size:.82rem;font-weight:500;color:var(--ink-soft);
+    background:rgba(255,255,255,.45);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid rgba(255,255,255,.5);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.7), 0 6px 20px rgba(30,40,25,.08);}
+  .ldot{width:7px;height:7px;border-radius:50%;background:var(--ink-soft);flex:none;}
+  .ldot.on{background:var(--moss);}
+  @media (prefers-reduced-motion:no-preference){
+    .ldot.on{animation:pulse 3s ease-in-out infinite;}
+    @keyframes pulse{0%,100%{box-shadow:0 0 0 3px rgba(92,115,64,.18)}50%{box-shadow:0 0 0 7px rgba(92,115,64,.04)}}}
+  .ldot.off{background:var(--rust);}
+
+  .range{display:flex;flex-wrap:wrap;gap:.6rem;justify-content:center;margin-bottom:2rem;}
+  .range a{font-size:.78rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    padding:.62rem 1.15rem;border-radius:999px;color:var(--ink-soft);
+    border:1px solid rgba(63,94,57,.2);background:rgba(255,255,255,.5);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.5);
+    transition:transform .25s ease, background .25s ease, color .25s ease, border-color .25s ease;}
+  .range a:hover{background:rgba(255,255,255,.82);color:var(--ink);transform:translateY(-2px);}
+  .range a.on{background:rgba(43,56,27,.7);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+    border-color:rgba(255,255,255,.2);color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22), 0 8px 24px rgba(30,40,25,.2);}
+
+  .chart-wrap{position:relative;height:280px;margin-top:1.1rem;}
+  @media (max-width:640px){.chart-wrap{height:230px;}}
+
+  .panel{position:relative;overflow:hidden;background:rgba(63,94,57,.12);
+    -webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);
+    border:1px solid rgba(63,94,57,.18);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.5), 0 20px 50px rgba(30,40,25,.06);
+    border-radius:32px;margin:0 .75rem;padding:clamp(3.5rem,7vw,5.5rem) 0;}
+  .panel::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,.35), transparent 60%);}
+  .panel > .container{position:relative;z-index:1;}
+
+  .risk-list{max-width:720px;margin:0 auto;}
+  .risk{display:flex;align-items:center;gap:1rem;padding:1.05rem 0;border-bottom:1px solid rgba(63,94,57,.16);
+    transition:border-color .35s ease;}
+  .risk:last-child{border-bottom:0;} .risk:hover{border-bottom-color:var(--moss);}
+  .risk-n{flex:1;min-width:0;}
+  .risk-n b{display:block;font-size:.98rem;font-weight:600;color:var(--ink);letter-spacing:-.01em;}
+  .risk-n .sp{font-family:'Instrument Serif',Georgia,serif;font-style:italic;
+    font-size:.92rem;color:var(--ink-soft);}
+  .bar{width:110px;height:6px;border-radius:999px;background:rgba(63,94,57,.14);overflow:hidden;flex:none;}
+  .bar span{display:block;height:100%;border-radius:999px;background:var(--moss);}
+  .bar.mid span{background:var(--amber);} .bar.high span{background:var(--rust);}
+  .pct{width:46px;text-align:right;font-size:.92rem;font-weight:700;color:var(--ink);
+    font-variant-numeric:tabular-nums;}
+  .est{font-size:.62rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-soft);margin-left:.5rem;}
+  .risk-note{text-align:center;margin-top:1.6rem;font-size:.88rem;color:var(--ink-soft);}
+  .risk-note a{color:var(--green);font-weight:600;}
+
+  .connect{text-align:center;}
+  .connect h3{font-size:clamp(1.7rem,4vw,2.6rem);color:var(--ink);}
+  .connect h3 .serif{font-size:1.05em;color:var(--green);}
+  .connect p{max-width:480px;margin:1rem auto 2rem;color:var(--ink-soft);font-size:1.02rem;}
+
+  .footer{text-align:center;padding:3.2rem 1.5rem 3.5rem;color:var(--ink-soft);}
+  .footer .brand{justify-content:center;margin-bottom:1rem;}
+  .footer .meta{font-size:.88rem;}
+  .footer .status{font-size:.8rem;font-style:italic;opacity:.85;margin-top:.3rem;}
+  .foot-social{margin-top:1.5rem;}
+
+  .reveal{opacity:0;transform:translateY(16px);
+    transition:opacity .7s cubic-bezier(.22,1,.36,1), transform .7s cubic-bezier(.22,1,.36,1);}
+  .reveal.in{opacity:1;transform:none;}
+
+  @media (hover:hover) and (pointer:fine){
+    html{scrollbar-width:thin;scrollbar-color:rgba(63,94,57,0) transparent;transition:scrollbar-color .35s ease;}
+    html:hover,html:focus-within{scrollbar-color:rgba(63,94,57,.42) transparent;}
+    ::-webkit-scrollbar{width:13px;height:13px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background-color:rgba(63,94,57,0);border:4px solid transparent;
+      border-radius:999px;background-clip:content-box;transition:background-color .35s ease;}
+    html:hover ::-webkit-scrollbar-thumb{background-color:rgba(63,94,57,.38);}
+    ::-webkit-scrollbar-thumb:hover{background-color:rgba(63,94,57,.6);}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{transition:none!important;animation:none!important}
+    .card:hover{transform:none}
+  }
+</style>
+</head>
+<body id="top">
+
+<div class="horizon" aria-hidden="true"></div>
+
+<div class="scroll-progress" id="scroll-progress"></div>
+
+<header class="header" id="header">
+  <a class="brand" href="https://agrisync.tech">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z"/></svg>
+    AgriSync
+  </a>
+  <nav class="nav">
+    <a href="https://agrisync.tech/#what">Overview</a>
+    <a href="https://agrisync.tech/#how">How it works</a>
+    <a href="https://agrisync.tech/#engine">Intelligence</a>
+    <a href="https://agrisync.tech/#about">About</a>
+    <a href="https://agrisync.tech/#stack">Stack</a>
+  </nav>
+  <a class="btn btn-glass" data-ag-auth href="https://agrisync.tech/#connect">Connect</a>
+</header>
+
+<section class="section lead-section">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Live from the field</span>
+      <h2>{{ site.name }} station, <span class="serif">speaking now.</span></h2>
+      <p class="lede">Cabbage microclimate measured at the leaf, every minute, in
+      {{ site.name }}, {{ site.region }}.</p>
+      <div style="margin-top:1.6rem">
+        <span class="livepill">
+          {% if latest and latest.online %}<span class="ldot on"></span>Live · {{ latest.observed_at }} IST
+          {% elif latest %}<span class="ldot off"></span>Last reading {{ latest.age_minutes|round|int }} min ago
+          {% else %}<span class="ldot"></span>Waiting for the first reading{% endif %}
+        </span>
+      </div>
+    </div>
+
+    <div class="grid g-metrics reveal">
+      <div class="card metric"><span class="tag">Air</span>
+        <span class="n" id="v-air">{{ latest.air_temp_c|round(1) if latest and latest.air_temp_c is not none else '—' }}<span class="u"> °C</span></span>
+        <span class="l">Temperature</span></div>
+      <div class="card metric"><span class="tag">Humidity</span>
+        <span class="n" id="v-hum">{{ latest.humidity_pct|round(0)|int if latest and latest.humidity_pct is not none else '—' }}<span class="u"> %</span></span>
+        <span class="l">Relative</span></div>
+      <div class="card metric"><span class="tag">Dew point</span>
+        <span class="n" id="v-dew">{{ latest.dew_point_c|round(1) if latest and latest.dew_point_c is not none else '—' }}<span class="u"> °C</span></span>
+        <span class="l">Condensation below this</span></div>
+      <div class="card metric"><span class="tag">Leaf</span>
+        <span class="n" id="v-wet">{% if latest and latest.leaf_wetness is not none %}{{ latest.leaf_wetness|round(0)|int }}<span class="u"> /100</span>{% else %}—{% endif %}</span>
+        <span class="l">Wetness</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Over time</span>
+      <h2>The last <span class="serif">{{ (hours/24)|round|int }} days.</span></h2>
+      <p class="lede">{{ stats.readings or 0 }} readings{% if stats.coverage_pct %} · {{ stats.coverage_pct }}% coverage{% endif %}</p>
+    </div>
+
+    <div class="range reveal">
+      <a href="?hours=24"  class="{{ 'on' if hours == 24 }}">24 hours</a>
+      <a href="?hours=72"  class="{{ 'on' if hours == 72 }}">3 days</a>
+      <a href="?hours=168" class="{{ 'on' if hours == 168 }}">7 days</a>
+      <a href="{{ deeper.api_url }}" rel="nofollow">Full history →</a>
+    </div>
+
+    <div class="grid g-charts reveal">
+      <div class="card"><span class="tag">Temperature &amp; dew point</span>
+        <div class="chart-wrap"><canvas id="c-temp"></canvas></div></div>
+      <div class="card"><span class="tag">Relative humidity</span>
+        <div class="chart-wrap"><canvas id="c-hum"></canvas></div></div>
+    </div>
+
+    {% if stats.temp_min is not none %}
+    <div class="grid g-metrics reveal" style="margin-top:1.25rem">
+      <div class="card metric"><span class="tag">Low</span>
+        <span class="n">{{ stats.temp_min }}<span class="u"> °C</span></span><span class="l">Coldest</span></div>
+      <div class="card metric"><span class="tag">High</span>
+        <span class="n">{{ stats.temp_max }}<span class="u"> °C</span></span><span class="l">Warmest</span></div>
+      <div class="card metric"><span class="tag">Mean</span>
+        <span class="n">{{ stats.humidity_mean }}<span class="u"> %</span></span><span class="l">Humidity</span></div>
+      <div class="card metric"><span class="tag">Wet</span>
+        <span class="n">{% if wet.available %}{{ wet.hours }}<span class="u"> h</span>{% else %}—{% endif %}</span>
+        <span class="l">Leaf wet hours</span></div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="section">
+  <div class="panel reveal">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Disease pressure</span>
+        <h2>Conditions, <span class="serif">scored.</span></h2>
+      </div>
+      <div class="risk-list">
+      {% if risk.available %}
+        {% for d in risk.diseases %}
+        <div class="risk">
+          <div class="risk-n"><b>{{ d.name }}{% if not d.sourced %}<span class="est">Estimated</span>{% endif %}</b>
+            <span class="sp">{{ d.pathogen }}</span></div>
+          <div class="bar {{ 'high' if d.pressure > 0.66 else 'mid' if d.pressure > 0.33 else '' }}">
+            <span style="width:{{ (d.pressure*100)|round|int }}%"></span></div>
+          <div class="pct">{{ (d.pressure*100)|round|int }}%</div>
+        </div>
+        {% endfor %}
+        <p class="risk-note">Uncalibrated infection pressure, not a prediction.
+          <a href="https://agrisync.tech/#engine">How this is calculated →</a></p>
+      {% else %}
+        <p style="text-align:center;color:var(--ink-soft);font-size:.95rem">
+          {{ risk.reason if risk.reason else 'Waiting for leaf wetness data.' }}</p>
+      {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="connect reveal">
+      <h3>Beyond <span class="serif">{{ deeper.max_days }} days.</span></h3>
+      <p>{{ deeper.note }}</p>
+      <a class="btn btn-greenglass" href="{{ deeper.api_url }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        Connect
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <a class="brand" href="https://agrisync.tech">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z"/></svg>
+    AgriSync
+  </a>
+  <p class="meta">{{ site.lat }}, {{ site.lon }} · {{ site.crop }}, {{ site.season }} season</p>
+  <p class="status">The last {{ deeper.max_days }} days are public.</p>
+  <div class="foot-social">
+    <a class="btn btn-glass" href="https://www.linkedin.com/in/nikhil-siddhu-411406366"
+       target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9h4v12H3zM9 9h3.8v1.7h.05c.53-1 1.83-2.05 3.76-2.05C20.4 8.65 21 11 21 14.2V21h-4v-6c0-1.43-.03-3.27-2-3.27-2 0-2.3 1.56-2.3 3.17V21H9z"/></svg>
+      Follow the build
+    </a>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+  var S = {{ series|tojson }};
+  var cs = getComputedStyle(document.documentElement), C = function(n){return cs.getPropertyValue(n).trim();};
+
+  Chart.defaults.color = C('--ink-soft');
+  Chart.defaults.borderColor = 'rgba(63,94,57,.12)';
+  Chart.defaults.font.family = "Inter, system-ui, sans-serif";
+  Chart.defaults.font.size = 11;
+
+  var base = {responsive:true,maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+      font:{size:11,weight:'500'},padding:16}}},
+    elements:{point:{radius:0,hitRadius:14},line:{tension:.35,borderWidth:2}},
+    scales:{x:{grid:{display:false},ticks:{maxTicksLimit:7}},
+            y:{border:{display:false},ticks:{maxTicksLimit:5}}}};
+
+  if(S && S.labels && S.labels.length){
+    new Chart(document.getElementById('c-temp'),{type:'line',data:{labels:S.labels,datasets:[
+      {label:'Air',data:S.air,borderColor:C('--green'),fill:false},
+      {label:'Dew point',data:S.dew,borderColor:C('--amber'),borderDash:[5,4],fill:false}
+    ].concat(S.leaf && S.leaf.some(function(v){return v!==null;})
+      ? [{label:'Leaf',data:S.leaf,borderColor:C('--rust'),fill:false}] : [])},options:base});
+
+    new Chart(document.getElementById('c-hum'),{type:'line',data:{labels:S.labels,datasets:[
+      {label:'Humidity %',data:S.humidity,borderColor:C('--moss'),
+       backgroundColor:'rgba(92,115,64,.12)',fill:true}]},
+      options:Object.assign({},base,{scales:Object.assign({},base.scales,
+        {y:Object.assign({},base.scales.y,{min:0,max:100})})})});
+  }
+
+  /* Reveal, scroll progress, header state — same behaviour as agrisync.tech */
+  var io = new IntersectionObserver(function(es){
+    es.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{rootMargin:'0px 0px -8% 0px',threshold:.08});
+  document.querySelectorAll('.reveal').forEach(function(el){io.observe(el);});
+
+  var bar = document.getElementById('scroll-progress'), hdr = document.getElementById('header'), tick=false;
+  function onScroll(){
+    var h = document.documentElement.scrollHeight - innerHeight;
+    bar.style.transform = 'scaleX(' + (h>0 ? scrollY/h : 0) + ')';
+    hdr.classList.toggle('scrolled', scrollY > 20);
+    tick = false;
+  }
+  addEventListener('scroll', function(){ if(!tick){ tick=true; requestAnimationFrame(onScroll);} },{passive:true});
+  onScroll();
+
+  /* Pointer-following glow, identical approach to the main site */
+  if(matchMedia('(hover:hover) and (pointer:fine)').matches){
+    var raf=null, pending=null;
+    function apply(){ raf=null; if(pending){
+      pending.el.style.setProperty('--mx',pending.x+'px');
+      pending.el.style.setProperty('--my',pending.y+'px'); } }
+    document.querySelectorAll('.card').forEach(function(el){
+      el.addEventListener('pointermove',function(e){
+        var r=el.getBoundingClientRect();
+        pending={el:el,x:e.clientX-r.left,y:e.clientY-r.top};
+        if(!raf) raf=requestAnimationFrame(apply);
+      },{passive:true});
+    });
+  }
+
+  setInterval(function(){
+    fetch('/data.json?hours={{ hours }}').then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(!d||!d.latest) return;
+      function set(id,v,dp){var e=document.getElementById(id);
+        if(e&&v!==null&&v!==undefined) e.childNodes[0].nodeValue=Number(v).toFixed(dp);}
+      set('v-air',d.latest.air_temp_c,1); set('v-hum',d.latest.humidity_pct,0);
+      set('v-dew',d.latest.dew_point_c,1); set('v-wet',d.latest.leaf_wetness,0);
+    }).catch(function(){});
+  },60000);
+})();
+</script>
+
+<!--
+  AgriSync sign-in widget.
+
+  PASTE THIS WHOLE BLOCK immediately before </body> in:
+      Agrisync-website-main/index.html          (the static site)
+      ~/agrisync/dashboard/templates/index.html (the dashboard)
+
+  It is self-contained - no build step, no files to host. It finds your
+  existing "Connect" button and takes it over, so no other markup changes.
+
+  WHAT IT DOES
+    On load it asks api.agrisync.tech who you are. Signed out, the header
+    button reads "Sign in" and opens a modal. Signed in, it becomes a circle
+    with your initial and a dropdown.
+
+    The Google button inside the modal is Google's own, rendered by their
+    library. That is deliberate: a hand-drawn imitation is against their
+    branding rules, and people trust the real one more anyway.
+
+  WHY A POPUP AND NOT A REDIRECT
+    A redirect loses your place on the page and feels like leaving the site.
+    The popup closes and the header changes underneath it.
+-->
+
+<style>
+  /* ---------------------------------------------------------------- auth -- */
+  /* Uses your existing --paper / --ink / --green variables where they exist,
+     with fallbacks so this also works if pasted somewhere they do not. */
+
+  .ag-auth { position: relative; display: inline-flex; align-items: center; }
+
+  /* Signed-out button. Matches your .btn sizing but with a real border, so it
+     reads as an action rather than another piece of frosted glass. */
+  .ag-signin {
+    display: inline-flex; align-items: center; gap: .5rem;
+    padding: .7rem 1.25rem; border-radius: 999px;
+    border: 1.5px solid var(--ink, #20271f);
+    background: var(--ink, #20271f); color: var(--paper, #f4f2ec);
+    font: inherit; font-size: .78rem; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    cursor: pointer; white-space: nowrap;
+    transition: transform .25s cubic-bezier(.22,1,.36,1), opacity .25s ease;
+  }
+  .ag-signin:hover { opacity: .88; }
+  .ag-signin:active { transform: scale(.96); }
+
+  /* Signed-in avatar */
+  .ag-avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    border: 1.5px solid var(--ink, #20271f);
+    background: var(--green, #3f5e39); color: #fff;
+    font: inherit; font-size: 15px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+    transition: transform .25s cubic-bezier(.22,1,.36,1);
+  }
+  .ag-avatar:hover { transform: scale(1.05); }
+  .ag-avatar:active { transform: scale(.96); }
+
+  /* Dropdown */
+  .ag-menu {
+    position: absolute; top: calc(100% + 12px); right: 0; z-index: 9000;
+    min-width: 244px; padding: 8px;
+    background: var(--card, #fbfaf6);
+    border: 1.5px solid var(--ink, #20271f);
+    border-radius: 16px;
+    box-shadow: 0 18px 40px rgba(30,40,25,.16);
+    opacity: 0; visibility: hidden; transform: translateY(-6px);
+    transition: opacity .18s ease, transform .18s ease, visibility .18s;
+  }
+  .ag-menu.open { opacity: 1; visibility: visible; transform: translateY(0); }
+  .ag-who {
+    padding: 10px 12px 12px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--line, #e4e1d6);
+  }
+  .ag-who b {
+    display: block; font-size: 14.5px; font-weight: 600;
+    color: var(--ink, #20271f); text-transform: none; letter-spacing: 0;
+  }
+  .ag-who span {
+    display: block; font-size: 12.5px; color: var(--ink-soft, #5f655a);
+    margin-top: 2px; word-break: break-all;
+  }
+  .ag-tag {
+    display: inline-block; margin-top: 8px; padding: 2px 9px;
+    border-radius: 999px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase;
+    background: var(--green, #3f5e39); color: #fff;
+  }
+  .ag-menu a, .ag-menu button.ag-item {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 9px 12px; border: 0; border-radius: 10px; background: none;
+    font: inherit; font-size: 14px; font-weight: 500; text-align: left;
+    color: var(--ink, #20271f); text-decoration: none; cursor: pointer;
+    text-transform: none; letter-spacing: 0;
+  }
+  .ag-menu a:hover, .ag-menu button.ag-item:hover { background: var(--paper, #f4f2ec); }
+  .ag-menu .ag-out { color: #9c3b2e; }
+  .ag-sep { height: 1px; margin: 6px 4px; background: var(--line, #e4e1d6); }
+
+  /* Modal */
+  .ag-backdrop {
+    position: fixed; inset: 0; z-index: 9998;
+    background: rgba(24,28,22,.42);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    opacity: 0; visibility: hidden; transition: opacity .22s ease, visibility .22s;
+  }
+  .ag-backdrop.open { opacity: 1; visibility: visible; }
+  .ag-modal {
+    position: relative; width: 100%; max-width: 400px;
+    background: var(--card, #fbfaf6);
+    border: 1.5px solid var(--ink, #20271f);
+    border-radius: 22px; padding: 38px 34px 30px;
+    box-shadow: 0 30px 70px rgba(20,28,18,.28);
+    transform: translateY(10px) scale(.98);
+    transition: transform .28s cubic-bezier(.22,1,.36,1);
+    text-align: center;
+  }
+  .ag-backdrop.open .ag-modal { transform: translateY(0) scale(1); }
+  .ag-close {
+    position: absolute; top: 14px; right: 14px;
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 1.5px solid var(--ink, #20271f); background: none;
+    color: var(--ink, #20271f); font-size: 15px; line-height: 1;
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ag-close:hover { background: var(--paper, #f4f2ec); }
+  .ag-modal h3 {
+    margin: 0 0 8px; font-size: 23px; font-weight: 600;
+    letter-spacing: -.01em; color: var(--ink, #20271f);
+  }
+  .ag-modal h3 em {
+    font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+    color: var(--green, #3f5e39);
+  }
+  .ag-modal p {
+    margin: 0 0 22px; font-size: 14.5px; line-height: 1.55;
+    color: var(--ink-soft, #5f655a);
+  }
+  .ag-gbtn { display: flex; justify-content: center; min-height: 44px; }
+  .ag-fine {
+    margin: 20px 0 0; font-size: 11.5px; line-height: 1.5;
+    color: var(--ink-soft, #5f655a);
+  }
+  .ag-err {
+    margin: 14px 0 0; font-size: 13px; color: #9c3b2e; min-height: 18px;
+  }
+
+  @media (max-width: 640px) {
+    .ag-menu { right: -8px; min-width: 214px; }
+    .ag-modal { padding: 32px 24px 26px; }
+  }
+</style>
+
+<div class="ag-backdrop" id="agBackdrop" role="dialog" aria-modal="true" aria-hidden="true">
+  <div class="ag-modal">
+    <button class="ag-close" id="agClose" aria-label="Close">&times;</button>
+    <h3>See the <em>whole field.</em></h3>
+    <p>Sign in to open the full record, the daily breakdown and the canopy
+       images. Free, and it takes one click.</p>
+    <div class="ag-gbtn" id="agGoogleBtn"></div>
+    <p class="ag-err" id="agErr"></p>
+    <p class="ag-fine">
+      We receive your name and email address from Google, and nothing else.
+      No password is created and none is stored.
+    </p>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+(function () {
+  var API   = 'https://ingest.agrisync.tech';
+  var DASH  = 'https://dashboard.agrisync.tech';
+  var state = { signed_in: false };
+
+  var backdrop = document.getElementById('agBackdrop');
+  var errBox   = document.getElementById('agErr');
+  var mounted  = false;
+
+  /* ------------------------------------------------------------- helpers -- */
+
+  function api(path, options) {
+    // credentials:'include' is what carries the session cookie across
+    // subdomains. Without it the browser sends nothing and you are always
+    // signed out.
+    return fetch(API + path, Object.assign({ credentials: 'include' }, options || {}))
+      .then(function (r) { return r.json(); });
+  }
+
+  function openModal() {
+    backdrop.classList.add('open');
+    backdrop.setAttribute('aria-hidden', 'false');
+    errBox.textContent = '';
+    mountGoogle();
+  }
+  function closeModal() {
+    backdrop.classList.remove('open');
+    backdrop.setAttribute('aria-hidden', 'true');
+  }
+
+  document.getElementById('agClose').addEventListener('click', closeModal);
+  backdrop.addEventListener('click', function (e) {
+    if (e.target === backdrop) closeModal();      // click outside to dismiss
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  /* -------------------------------------------------------------- google -- */
+
+  function mountGoogle() {
+    if (mounted || !window.google || !window.google.accounts) return;
+
+    api('/auth/config').then(function (cfg) {
+      if (!cfg.client_id) {
+        errBox.textContent = 'Sign-in is not configured yet.';
+        return;
+      }
+      google.accounts.id.initialize({
+        client_id: cfg.client_id,
+        callback: onGoogle,
+        ux_mode: 'popup',
+        auto_select: false,
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('agGoogleBtn'),
+        { theme: 'outline', size: 'large', shape: 'pill',
+          text: 'continue_with', width: 300, logo_alignment: 'left' }
+      );
+      mounted = true;
+    }).catch(function () {
+      errBox.textContent = 'Cannot reach the server. Try again in a moment.';
+    });
+  }
+
+  function onGoogle(response) {
+    errBox.textContent = '';
+    api('/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credential: response.credential }),
+    }).then(function (data) {
+      if (!data.ok) {
+        errBox.textContent = data.error || 'That sign-in did not work.';
+        return;
+      }
+      closeModal();
+      refresh();
+    }).catch(function () {
+      errBox.textContent = 'Could not reach the server.';
+    });
+  }
+
+  /* --------------------------------------------------------------- header -- */
+
+  function render(container) {
+    container.innerHTML = '';
+
+    if (!state.signed_in) {
+      var b = document.createElement('button');
+      b.className = 'ag-signin';
+      b.type = 'button';
+      b.textContent = 'Sign in';
+      b.addEventListener('click', openModal);
+      container.appendChild(b);
+      return;
+    }
+
+    var av = document.createElement('button');
+    av.className = 'ag-avatar';
+    av.type = 'button';
+    av.textContent = state.initial || '·';
+    av.setAttribute('aria-label', 'Account');
+
+    var menu = document.createElement('div');
+    menu.className = 'ag-menu';
+    menu.innerHTML =
+      '<div class="ag-who"><b>' + esc(state.name || 'Signed in') + '</b>' +
+      '<span>' + esc(state.email) + '</span>' +
+      (state.is_admin ? '<span class="ag-tag">Admin</span>'
+                      : (state.is_granted ? '<span class="ag-tag">Full access</span>' : '')) +
+      '</div>' +
+      '<a href="' + DASH + '">Dashboard</a>' +
+      '<a href="' + API + '/photos">Field images</a>' +
+      (state.is_granted ? '<a href="' + API + '/export/readings.csv">Download data</a>' : '') +
+      '<div class="ag-sep"></div>' +
+      '<button class="ag-item ag-out" type="button" id="agOut">Sign out</button>';
+
+    av.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menu.classList.toggle('open');
+    });
+    document.addEventListener('click', function () { menu.classList.remove('open'); });
+    menu.addEventListener('click', function (e) { e.stopPropagation(); });
+
+    container.appendChild(av);
+    container.appendChild(menu);
+
+    menu.querySelector('#agOut').addEventListener('click', function () {
+      api('/auth/logout', { method: 'POST' }).then(function () {
+        if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+        refresh();
+      });
+    });
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;',
+               '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  /* Take over the existing Connect button wherever it appears, and give any
+     "log in to see more" prompts on the page a working click. */
+  function slots() {
+    var found = [];
+
+    document.querySelectorAll('.header-cta, [data-ag-auth]').forEach(function (el) {
+      if (el.classList.contains('ag-auth')) { found.push(el); return; }
+      var box = document.createElement('div');
+      box.className = 'ag-auth';
+      el.parentNode.replaceChild(box, el);
+      found.push(box);
+    });
+
+    return found;
+  }
+
+  var containers = null;
+
+  function refresh() {
+    api('/auth/me').then(function (data) {
+      state = data || { signed_in: false };
+      if (!containers) containers = slots();
+      containers.forEach(render);
+      document.body.classList.toggle('ag-in', !!state.signed_in);
+      document.body.classList.toggle('ag-out-state', !state.signed_in);
+      // Anything on the page that wants to react to sign-in can listen.
+      document.dispatchEvent(new CustomEvent('ag:auth', { detail: state }));
+    }).catch(function () {
+      // API unreachable. Show the signed-out state rather than an error - the
+      // marketing site should still work if the Pi is off.
+      state = { signed_in: false };
+      if (!containers) containers = slots();
+      containers.forEach(render);
+    });
+  }
+
+  // Any element with data-ag-signin opens the modal. Use it on the blurred
+  // "see the full history" prompts.
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest && e.target.closest('[data-ag-signin]');
+    if (t) { e.preventDefault(); openModal(); }
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', refresh);
+  } else {
+    refresh();
+  }
+})();
+</script>
+
+</body>
+</html>

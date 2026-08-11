@@ -24,6 +24,8 @@
 #include <img_converters.h>
 #include <FS.h>
 #include <SD_MMC.h>
+#include "photosender.h"
+#include <Preferences.h>
 
 // AI-Thinker ESP32-CAM pin map
 #define PWDN_GPIO_NUM  32
@@ -48,6 +50,8 @@
 unsigned long lastCapture  = 0;
 unsigned long lastCamRetry = 0;
 unsigned long imageCount   = 0;
+unsigned long bootId       = 0;    // survives power loss, unlike imageCount
+Preferences   prefs;
 
 bool cameraReady      = false;
 bool sdReady          = false;
@@ -160,6 +164,7 @@ bool startSD() {
     SD_MMC.mkdir("/canopy");
   }
   Serial.printf("SD OK - %llu MB\n", SD_MMC.cardSize() / (1024ULL * 1024ULL));
+  photoSenderBegin();
   return true;
 }
 
@@ -176,7 +181,7 @@ void capture() {
 
   if (needsSoftwareJpeg) {
     size_t jpgLen = 0;
-    if (!frame2jpg(fb, 80, &jpgBuf, &jpgLen)) {
+    if (!frame2jpg(fb, 55, &jpgBuf, &jpgLen)) {
       Serial.println("[img] software JPEG encode failed - out of memory?");
       esp_camera_fb_return(fb);
       return;
@@ -189,8 +194,8 @@ void capture() {
   // plus uptime. TODO: pull time from the Pi once the upload path exists, so
   // images can be matched against sensor readings.
   char path[64];
-  snprintf(path, sizeof(path), "/canopy/img_%06lu_%lus.jpg",
-           imageCount, millis() / 1000);
+  snprintf(path, sizeof(path), "/canopy/img_%05lu_%06lu.jpg",
+         bootId, imageCount);
 
   File file = SD_MMC.open(path, FILE_WRITE);
   if (!file) {
@@ -200,10 +205,13 @@ void capture() {
     return;
   }
 
-  file.write(data, len);
+file.write(data, len);
   file.close();
   Serial.printf("[img] %s  %u bytes%s\n", path, (unsigned)len,
                 needsSoftwareJpeg ? "  (software jpeg)" : "");
+
+  const char *base = strrchr(path, '/');
+  photoSendAndCatchUp(base ? base + 1 : path, data, len);
 
   if (jpgBuf) free(jpgBuf);
   esp_camera_fb_return(fb);
@@ -214,6 +222,11 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=== AgriSync Board B (ESP32-CAM)  fw 1.1.0 ===");
+prefs.begin("agrisync", false);
+  bootId = prefs.getULong("boot", 0) + 1;
+  prefs.putULong("boot", bootId);
+  prefs.end();
+  Serial.printf("[fs] boot #%lu\n", bootId);
 
   pinMode(PIN_STATUS_LED, OUTPUT);
   digitalWrite(PIN_STATUS_LED, HIGH);  // active LOW, so HIGH is off

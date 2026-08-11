@@ -17,9 +17,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flask import Flask, jsonify
-
+from src.api.auth import bp as auth_bp
 from src.api.devices import bp as devices_bp
 from src.api.health import bp as health_bp
+from src.api.photos import bp as photos_bp
 from src.api.risk import bp as risk_bp
 from src.api.sensors import bp as sensors_bp
 from src.api.views import bp as views_bp
@@ -38,7 +39,9 @@ def create_app(config_object=Config):
 
     init_db(app)
 
+    app.register_blueprint(auth_bp)
     app.register_blueprint(health_bp)
+    app.register_blueprint(photos_bp)
     app.register_blueprint(devices_bp)
     app.register_blueprint(views_bp)
     app.register_blueprint(sensors_bp)

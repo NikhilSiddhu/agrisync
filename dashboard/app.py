@@ -1,4 +1,6 @@
-"""Public AgriSync dashboard.
+"""Public AgriSync dashboard, with a members' view for signed-in visitors.
+
+Goes at:  ~/agrisync/dashboard/app.py   (replaces the existing file)
 
 Runs as its OWN service on port 8080, separate from the API on 5000.
 
@@ -10,8 +12,30 @@ hostname and walk straight past the Access policy protecting the other one.
 This process:
   - only ever reads from MongoDB
   - only ever returns HTML and chart data
-  - caps every query at 7 days
   - holds no keys and exposes no device credentials
+
+
+ONE URL, TWO VIEWS
+    A stranger gets seven days. A signed-in visitor gets everything.
+
+    Same address either way, which is the whole point. A bookmark keeps
+    working. A link you paste into an email opens for whoever receives it, at
+    whatever depth they are entitled to. The alternative - sending signed-in
+    people to a different hostname - breaks every link the moment it is shared
+    with someone in the other state.
+
+
+THE GATE IS HERE, NOT IN THE TEMPLATE
+    The blur in the stylesheet is decoration. It makes a locked section look
+    inviting instead of forbidding, and that is all it does. Anyone can open
+    devtools and delete a CSS rule.
+
+    What actually protects the data is this file: an anonymous request is
+    served a payload that DOES NOT CONTAIN the locked numbers. There is
+    nothing behind the blur to find, because it was never sent.
+
+    So every widening of scope below is guarded by `member`, and `member` comes
+    from a signed cookie that a browser cannot forge.
 
 Run:
     .venv/bin/gunicorn -w 2 -b 127.0.0.1:8080 "dashboard.app:create_app()"
@@ -27,24 +51,53 @@ from flask import Flask, jsonify, render_template, request
 from dashboard import data
 
 
+def _viewer(app):
+    """Who is asking, or None.
+
+    Imported lazily and defensively. The dashboard's job is to render cabbage
+    temperatures for the public; if the auth stack is broken or half-installed
+    that should downgrade the page to its anonymous view, not take the whole
+    site down. Failing closed here means a stranger sees exactly what a
+    stranger is meant to see.
+    """
+    try:
+        from src import whoami
+        return whoami.current(request)
+    except Exception:
+        app.logger.debug("auth unavailable, serving public view", exc_info=True)
+        return None
+
+
 def create_app():
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 8 * 1024
+
+    # Needed to READ the session cookie the API issued. Both processes sign
+    # with the same key, so a login on either is recognised by both.
+    app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "")
 
     @app.after_request
     def headers(resp):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "SAMEORIGIN"
         resp.headers["Referrer-Policy"] = "no-referrer"
-        # Public page, changes once a minute. Let the edge cache it briefly so a
-        # burst of visitors does not hammer a Raspberry Pi.
-        resp.headers.setdefault("Cache-Control", "public, max-age=60")
         resp.headers.pop("Server", None)
         return resp
 
     @app.get("/")
     def index():
-        hours = data.clamp(request.args.get("hours", data.MAX_PUBLIC_HOURS))
+        who = _viewer(app)
+        member = who is not None
+
+        # A signed-in page is personal and must never be handed to the next
+        # visitor by a cache. The public one is identical for everybody and can
+        # sit at the edge for a minute.
+        cache = ("private, no-store" if member
+                 else "public, max-age=60")
+
+        requested = request.args.get("hours", data.DEFAULT_HOURS)
+        hours = data.clamp(requested, member=member)
+
         try:
             payload = {
                 "site": data.site(),
@@ -64,23 +117,78 @@ def create_app():
                 "wet": {"available": False}, "risk": {"available": False},
                 "deeper": data.deeper_access(), "hours": hours, "db_ok": False,
             }
-        return render_template("index.html", **payload)
+
+        # ---- members only -------------------------------------------------
+        # Everything below is added ONLY for a signed-in viewer. An anonymous
+        # response does not carry these keys at all, so the teaser has nothing
+        # underneath it.
+        payload["member"] = member
+        payload["viewer"] = who or {}
+        payload["is_admin"] = False
+        payload["ranges"] = data.RANGES
+        payload["span"] = data.span()
+
+        # Every link is a PATH, never a hostname. Written as
+        # "https://api.agrisync.tech/photos" these would tell every visitor
+        # where the admin surface lives; written as "/photos" the browser stays
+        # on dashboard.agrisync.tech and the tunnel forwards the path to the
+        # API process behind the scenes. Nothing in the page names the API
+        # host, so nothing in the page invites anyone to go poking at it.
+        payload["links"] = {
+            "photos": "/photos",
+            "csv": "/export/readings.csv",
+            "zip": "/photos/download-all",
+            "visitors": "/admin/visitors",
+            "requests": "/admin/requests",
+        }
+
+        # A stranger gets the top five rows - real readings, just the start of
+        # the table, with the rest fading out under skeleton bars. Five rather
+        # than zero because an empty table proves nothing, and rather than a
+        # hundred because the point is to show the shape, not give it away.
+        try:
+            payload["table"] = data.table(
+                hours, limit=data.TABLE_LIMIT if member else data.TABLE_PUBLIC)
+        except Exception:
+            app.logger.warning("readings table unavailable", exc_info=True)
+            payload["table"] = []
+
+        if member:
+            try:
+                from src import visitors
+                payload["is_admin"] = visitors.is_admin(who["email"])
+            except Exception:
+                pass
+
+        resp = app.make_response(render_template("index.html", **payload))
+        resp.headers["Cache-Control"] = cache
+        return resp
 
     @app.get("/data.json")
     def data_json():
         """Same numbers, for the page to refresh itself without a reload."""
-        hours = data.clamp(request.args.get("hours", data.MAX_PUBLIC_HOURS))
+        member = _viewer(app) is not None
+        hours = data.clamp(request.args.get("hours", data.DEFAULT_HOURS),
+                           member=member)
         try:
-            return jsonify({
+            out = {
                 "latest": data.latest(),
                 "stats": data.stats(hours),
                 "series": data.series(hours),
                 "wet": data.wet_hours(hours),
                 "risk": data.risk(),
                 "hours": hours,
-            })
+                "member": member,
+            }
+            if member:
+                out["table"] = data.table(hours)
+            resp = jsonify(out)
+            resp.headers["Cache-Control"] = ("private, no-store" if member
+                                             else "public, max-age=60")
+            return resp
         except Exception as exc:
-            return jsonify({"error": "data unavailable", "detail": str(exc)[:120]}), 503
+            return jsonify({"error": "data unavailable",
+                            "detail": str(exc)[:120]}), 503
 
     @app.get("/health")
     def health():

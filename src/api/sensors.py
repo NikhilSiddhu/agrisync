@@ -12,7 +12,7 @@ from src.hmac_auth import require_device_auth
 
 from src.db import get_db
 from src.ml.leaf_temp import leaf_temp_from_reading
-from src.ml.wetness import dew_point_c, leaf_wetness_index
+from src.ml.wetness import dew_point_c, estimated_leaf_temp_c, leaf_wetness_index
 from src.validation import check as quality_check
 
 bp = Blueprint("sensors", __name__, url_prefix="/api/v1/sensors")
@@ -111,6 +111,13 @@ def post_reading():
         if leaf is not None:
             doc["leaf_wetness"] = round(leaf_wetness_index(leaf, doc["dew_point_c"]), 1)
             doc["leaf_wetness_source"] = "proxy"
+        else:
+            est = estimated_leaf_temp_c(air)
+            doc["leaf_temp_c"] = round(est, 3)
+            doc["leaf_temp_method"] = "air_proxy"
+            doc["leaf_wetness"] = round(leaf_wetness_index(est, doc["dew_point_c"]), 1)
+            doc["leaf_wetness_source"] = "air_proxy"
+            doc["leaf_wetness_estimated"] = True
 
     flags = quality_check(doc)
     if flags:
