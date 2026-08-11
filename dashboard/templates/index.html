@@ -1161,26 +1161,6 @@ body.ag-in .only-out{ display:none; }
 })();
 </script>
 
-</body> in:
-      Agrisync-website-main/index.html          (the static site)
-      ~/agrisync/dashboard/templates/index.html (the dashboard)
-
-  It is self-contained - no build step, no files to host. It finds your
-  existing "Connect" button and takes it over, so no other markup changes.
-
-  WHAT IT DOES
-    On load it asks the ingest host who you are. Signed out, the header
-    button reads "Sign in" and opens a modal. Signed in, it becomes a circle
-    with your initial and a dropdown.
-
-    The Google button inside the modal is Google's own, rendered by their
-    library. That is deliberate: a hand-drawn imitation is against their
-    branding rules, and people trust the real one more anyway.
-
-  WHY A POPUP AND NOT A REDIRECT
-    A redirect loses your place on the page and feels like leaving the site.
-    The popup closes and the header changes underneath it.
--->
 
 <style>
   /* ---------------------------------------------------------------- auth -- */
