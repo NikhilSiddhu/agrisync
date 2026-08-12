@@ -346,85 +346,64 @@ public:
     long ts = syncTime();
     if (!ts) { trace("--", "no clock, cannot sign"); return -2; }
 
-    // Base64 length is deterministic, so the modem can be told the size
-    // without encoding anything first.
     size_t b64len = ((len + 2) / 3) * 4;
+
+    if (b64len > 60000) {
+      /* AT+HTTPDATA has a body ceiling on this firmware, and its <time>
+         argument tops out at 60000 - 90000 is rejected outright and the
+         DOWNLOAD prompt never arrives. Measured the hard way. */
+      trace("--", "encoded body too large for AT+HTTPDATA");
+      return -3;
+    }
+
+    /* ---- single buffer, one hash, one write --------------------------------
+       The previous version encoded the image twice - once to feed the HMAC,
+       once to feed the modem - and started a separate write burst per chunk.
+       A size sweep showed that any payload spanning more than one chunk with a
+       partial last chunk arrived with exactly one byte wrong, at the first
+       character of that final chunk. 21848 bytes sent, one byte altered at
+       offset 20480. Always the same place.
+
+       Encoding once and writing one continuous stream removes the boundary,
+       and with it the bug. It costs roughly 4/3 of the image in heap, which
+       is a fair price for uploads that actually verify. */
+    uint8_t *b64 = (uint8_t *)malloc(b64len + 1);
+    if (!b64) { trace("--", "no heap for encode buffer"); return -1; }
+
+    size_t olen = 0;
+    if (mbedtls_base64_encode(b64, b64len + 1, &olen, data, len) != 0 ||
+        olen != b64len) {
+      free(b64);
+      trace("--", "base64 encode failed");
+      return -1;
+    }
 
     char pfx[24];
     int pfxLen = snprintf(pfx, sizeof(pfx), "%ld.", ts);
 
-    /*
-     * The signature covers what actually goes on the wire - the base64 text,
-     * not the raw image. Signing the transmitted bytes means any alteration
-     * in flight is caught, which is the whole point after today.
-     *
-     * Encoded twice: once to hash, once to send. Encoding is cheap and this
-     * keeps a 60KB buffer off a heap that is already holding the image.
-     */
-    uint8_t enc[B64_CHUNK_OUT];
-    size_t olen;
-
-    mbedtls_md_context_t ctx;
-    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
-    mbedtls_md_init(&ctx);
-    mbedtls_md_setup(&ctx, info, 1);
-    mbedtls_md_hmac_starts(&ctx, (const unsigned char *)hmacSecret,
-                           strlen(hmacSecret));
-    mbedtls_md_hmac_update(&ctx, (const unsigned char *)pfx, pfxLen);
-
-    for (size_t off = 0; off < len; off += B64_CHUNK_IN) {
-      size_t n = (len - off > B64_CHUNK_IN) ? B64_CHUNK_IN : (len - off);
-      if (mbedtls_base64_encode(enc, sizeof(enc), &olen, data + off, n) != 0) {
-        mbedtls_md_free(&ctx);
-        trace("--", "base64 encode failed");
-        return -1;
-      }
-      mbedtls_md_hmac_update(&ctx, enc, olen);
-    }
-
-    byte mac[32];
-    mbedtls_md_hmac_finish(&ctx, mac);
-    mbedtls_md_free(&ctx);
-
-    char hex[65];
-    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", mac[i]);
-    hex[64] = 0;
-    String hdr = String(ts) + "." + String(hex);
+    /* Signs what actually goes on the wire - the base64 text, not the raw
+       image - so any alteration in flight is caught. hmacHex2 hashes the
+       prefix and the body without joining them, keeping one more copy of a
+       30KB payload off the heap. */
+    String hdr = String(ts) + "." +
+                 hmacHex2(hmacSecret, (const uint8_t *)pfx, pfxLen, b64, olen);
 
     char buf[256];
 
     at("AT+HTTPTERM", 3000);
     if (!at("AT+HTTPINIT", 8000)) {
       delay(1000);
-      if (!at("AT+HTTPINIT", 8000)) return -1;
+      if (!at("AT+HTTPINIT", 8000)) { free(b64); return -1; }
     }
 
-    // enc=b64 tells the server to decode before storing. Explicit rather than
-    // implied, so a raw upload from curl still works for testing.
     snprintf(buf, sizeof(buf),
              "AT+HTTPPARA=\"URL\",\"http://%s%s&enc=b64\"", host, path);
-    if (!at(buf, 5000)) { at("AT+HTTPTERM", 3000); return -1; }
+    if (!at(buf, 5000)) { at("AT+HTTPTERM", 3000); free(b64); return -1; }
 
     at("AT+HTTPPARA=\"CONTENT\",\"text/plain\"", 5000);
 
     String h = "AT+HTTPPARA=\"USERDATA\",\"X-Sig: " + hdr + "\"";
     at(h.c_str(), 5000);
-
-    /*
-     * 60000, not higher. The <time> argument to AT+HTTPDATA has a ceiling on
-     * this firmware: 60000 is accepted, 90000 is rejected outright and the
-     * modem never sends the DOWNLOAD prompt. Measured the hard way.
-     *
-     * 60 seconds is ample - 31KB at 115200 takes under three.
-     */
-    if (b64len > 60000) {
-      // Refuse clearly rather than failing at the prompt with no explanation.
-      // AT+HTTPDATA also has a body size ceiling around 64KB. If this fires,
-      // lower the JPEG quality in the camera's frame2jpg() call.
-      trace("--", "encoded body too large for AT+HTTPDATA");
-      at("AT+HTTPTERM", 3000);
-      return -3;
-    }
 
     snprintf(buf, sizeof(buf), "AT+HTTPDATA=%u,60000", (unsigned)b64len);
     trace(">>", buf);
@@ -432,23 +411,34 @@ public:
     if (!waitFor("DOWNLOAD", 15000)) {
       trace("--", "no DOWNLOAD prompt");
       at("AT+HTTPTERM", 3000);
+      free(b64);
       return -1;
     }
 
-    // Second encode pass, straight out to the modem.
-    for (size_t off = 0; off < len; off += B64_CHUNK_IN) {
-      size_t n = (len - off > B64_CHUNK_IN) ? B64_CHUNK_IN : (len - off);
-      mbedtls_base64_encode(enc, sizeof(enc), &olen, data + off, n);
+    // One uniform stream. Every piece is the same size except the last, and
+    // there are no restarts partway through.
+    /* Pacing matters as much as the buffer.
 
-      size_t sent = 0;
-      while (sent < olen) {
-        size_t w = (olen - sent > 512) ? 512 : (olen - sent);
-        _s.write(enc + sent, w);
-        sent += w;
-        delay(2);
-      }
+       Measured: fed more than 4096 bytes without a pause, the modem repeats
+       two characters at the boundary - not substitution, duplication, which
+       shifts everything after it. The old per-chunk encoding inserted a gap
+       at roughly that point by accident, which is why exactly-divisible
+       payloads used to survive. That was luck, not design.
+
+       So: smaller pieces, flush after each so the UART has genuinely drained
+       before more is queued, and a longer breath every 2KB. Costs well under
+       a second on a 32KB body, which is nothing against an upload that
+       verifies. */
+    size_t sent = 0;
+    while (sent < olen) {
+      size_t w = (olen - sent > 256) ? 256 : (olen - sent);
+      _s.write(b64 + sent, w);
+      _s.flush();
+      sent += w;
+      delay(4);
+      if ((sent & 2047) == 0) delay(20);
     }
-    _s.flush();
+    free(b64);
 
     String tmp;
     if (!readUntil("OK", tmp, 30000)) {

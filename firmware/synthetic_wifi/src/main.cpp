@@ -527,10 +527,80 @@ void clearBuffer() {
   Serial.println("[dump] buffer cleared");
 }
 
+
+/* Signed-upload self test, triggered by 'T' on the serial console.
+
+   Sends eight bytes through postBinary - the same signing, the same base64,
+   the same modem path as a photograph, minus the camera and the UART.
+
+   The server checks the signature BEFORE it checks the JPEG header, so the
+   response tells you which half works:
+       401 -> signature rejected, the bug is real and now reproducible
+       400 -> signature accepted, body rejected for not being a JPEG. Signing
+              is fine and the fault is upstream, in the camera or the link.
+*/
+/* Upload size sweep, triggered by 'T'.
+
+   The same bytes at increasing sizes, each through postBinary. The point is
+   to find the largest body this modem transmits without altering it.
+
+       400 -> arrived intact, refused only for not being a JPEG
+       401 -> arrived altered, signature no longer matches
+
+   A non-random pattern is used deliberately: if the Pi ever needs to show
+   WHERE corruption happens, a predictable payload makes the damaged offset
+   obvious, which random bytes would not.
+*/
+static void sigSweep() {
+#if USE_CELL
+  const size_t sizes[] = { 512, 2048, 4096, 8192, 12288, 16384, 24576 };
+  Serial.println("[sweep] finding the largest body that survives");
+
+  for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+    size_t n = sizes[i];
+    uint8_t *buf = (uint8_t *)malloc(n);
+    if (!buf) { Serial.printf("[sweep] %6u  no memory\n", (unsigned)n); continue; }
+    for (size_t k = 0; k < n; k++) buf[k] = (uint8_t)(k & 0xFF);
+
+    int code = modem.postBinary(CELL_HOST, "/api/v1/photos?name=sweep.jpg",
+                                buf, n, HMAC_SECRET);
+    free(buf);
+
+    Serial.printf("[sweep] %6u bytes -> HTTP %d  %s\n",
+                  (unsigned)n, code,
+                  code == 400 ? "INTACT"
+                : code == 401 ? "ALTERED"
+                              : "other");
+    delay(1500);
+  }
+  Serial.println("[sweep] done - largest INTACT is your usable payload");
+#else
+  Serial.println("[sweep] cellular build only");
+#endif
+}
+
+static void sigSelfTest() {
+#if USE_CELL
+  const uint8_t probe[] = "AGRISYNC";
+  Serial.println("[test] signed upload, 8 bytes");
+  int code = modem.postBinary(CELL_HOST,
+                              "/api/v1/photos?name=selftest.jpg",
+                              probe, sizeof(probe) - 1, HMAC_SECRET);
+  Serial.printf("[test] HTTP %d  %s\n", code,
+                code == 401 ? "signature REJECTED - the bug is real"
+              : code == 400 ? "signature OK (body correctly refused as not a JPEG)"
+              : code == 201 ? "accepted"
+                            : "see code");
+#else
+  Serial.println("[test] cellular build only");
+#endif
+}
+
 void serviceSerialCommands() {
   if (!Serial.available()) return;
   int c = Serial.read();
-  if (c == 'D' || c == 'd') dumpBuffer();
+  if (c == 'T' || c == 't') sigSweep();
+  else if (c == 'D' || c == 'd') dumpBuffer();
   else if (c == 'C' || c == 'c') clearBuffer();
   else if (c == '?') {
     Serial.printf("[status] fw %s  buffered %d  bytes %u\n",
