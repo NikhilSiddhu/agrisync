@@ -576,6 +576,38 @@ body.ag-in .only-out{ display:none; }
   .rt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   @media (max-width:420px){.rt thead th,.rt tbody td{padding-left:.6rem;padding-right:.6rem;}}
 </style>
+<style>
+/* The way in to the photographs, shown to signed-in visitors in place of the
+   placeholder tiles. data-ag-request makes it open the access request for
+   anyone not yet approved, exactly like the old button did. */
+.photo-door{
+  display:none; align-items:center; gap:1.1rem;
+  padding:1.5rem 1.6rem; border-radius:14px;
+  border:1px solid var(--line);
+  background:linear-gradient(135deg,#eef0e6,#f7f5ef 60%,#e9ecdf);
+  color:var(--ink); text-decoration:none;
+  transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+}
+body.ag-in .photo-door{ display:flex; }
+body.ag-in .lock-body .img-grid{ display:none; }
+/* One button left under the card: centre it for signed-in visitors too. */
+body.ag-in .only-in.member-actions{ display:flex; }
+.photo-door:hover{ transform:translateY(-2px); border-color:var(--moss);
+  box-shadow:0 10px 26px rgba(43,56,27,.10); }
+.photo-door-icon{ flex:none; width:54px; height:54px; border-radius:50%;
+  display:grid; place-items:center; background:rgba(92,115,64,.14); color:var(--moss); }
+.photo-door-icon svg{ width:26px; height:26px; }
+.photo-door-text{ flex:1; min-width:0; display:flex; flex-direction:column; gap:.25rem; }
+.photo-door-title{ font-weight:600; font-size:1.06rem; line-height:1.3; }
+.photo-door-sub{ font-size:.88rem; line-height:1.5; color:var(--ink-soft); }
+.photo-door-arrow{ flex:none; font-size:1.35rem; color:var(--moss); transition:transform .2s ease; }
+.photo-door:hover .photo-door-arrow{ transform:translateX(4px); }
+@media (max-width:520px){
+  .photo-door{ padding:1.1rem 1.1rem; gap:.85rem; }
+  .photo-door-icon{ width:44px; height:44px; }
+  .photo-door-title{ font-size:1rem; }
+}
+</style>
 </head>
 <body id="top">
 
@@ -822,21 +854,22 @@ body.ag-in .only-out{ display:none; }
 
     <div class="card lockable reveal">
       <div class="lock-body">
-        <!-- AGDEBUG member={{ member }} granted={{ can_see_photos }} thumbs={{ thumbs|length }} viewer={{ viewer.email }} -->
-        <div class="img-grid{% if thumbs %} img-grid--thumbs{% endif %}">
-          {%- if thumbs %}
-            {%- for n in thumbs %}
-          <a class="thumb-real" href="/photos/img/{{ n }}" target="_blank" rel="noopener">
-            <img src="/photos/img/{{ n }}" alt="Canopy" loading="lazy">
-          </a>
-            {%- endfor %}
-          {%- else %}
-            {%- for _ in range(8) %}<div class="img-cell"></div>{%- endfor %}
-          {%- endif %}
+        {#- No previews here any more: one clear way in to the photographs.
+            Signed-out visitors see the soft placeholder tiles under the
+            sign-in card; signed-in visitors see the door instead. -#}
+        <div class="img-grid">
+          {%- for _ in range(8) %}<div class="img-cell"></div>{%- endfor %}
         </div>
-        {#- VIEWALL_REMOVED. The Canopy photographs button below goes to the
-            same place; two controls for one action just makes a reader stop
-            and work out whether they differ. -#}
+        <a class="photo-door" href="{{ links.photos }}" data-ag-request="photos">
+          <span class="photo-door-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="M21 16l-5.5-5.5L6 19"/></svg>
+          </span>
+          <span class="photo-door-text">
+            <span class="photo-door-title">See the canopy photographs</span>
+            <span class="photo-door-sub">Every photo from the season, newest first. Open any one full size, or download them.</span>
+          </span>
+          <span class="photo-door-arrow" aria-hidden="true">&rarr;</span>
+        </a>
       </div>
 
       <div class="lock-veil">
@@ -861,10 +894,6 @@ body.ag-in .only-out{ display:none; }
           and the server decides either way. data-ag-request makes the script
           intercept the click and open the modal when access has not been
           granted yet. -#}
-      <a class="btn btn-greenglass" href="{{ links.photos }}" data-ag-request="photos">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16v14H4z"/><path d="M4 15l4-4 3 3 3-3 6 5"/></svg>
-        Canopy photographs
-      </a>
       <a class="btn btn-glass" href="{{ links.csv }}" data-ag-request="data">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 19h16"/></svg>
         Download the CSV
