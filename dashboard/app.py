@@ -228,6 +228,7 @@ def create_app():
                 "risk": data.risk(),
                 "hours": hours,
                 "member": member,
+                "feeds": data.feed_health(),
             }
             if member:
                 out["table"] = data.table(hours)

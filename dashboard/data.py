@@ -583,6 +583,27 @@ def anomalies():
             "stale": (_age_hours(doc) or 0) > 3}
 
 
+FEED_NAMES = ("forecast", "reanalysis", "satellite", "radar", "anomaly", "check")
+
+
+def feed_health():
+    """Hours since each outside feed last succeeded, and whether its latest
+    run failed. For the outside monitor. No error text: this is public."""
+    doc = _feed("status")
+    if not doc:
+        return None
+    now = datetime.now(timezone.utc)
+    out = {}
+    for name in FEED_NAMES:
+        e = doc.get(name) or {}
+        ok = e.get("last_ok")
+        if ok is not None and ok.tzinfo is None:
+            ok = ok.replace(tzinfo=timezone.utc)
+        out[name] = {"hours_since_ok": round((now - ok).total_seconds() / 3600, 1) if ok else None,
+                     "failing": "error" in e}
+    return out
+
+
 def field_log_summary():
     try:
         n = _db().field_log.count_documents({})

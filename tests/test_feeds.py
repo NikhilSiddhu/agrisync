@@ -380,6 +380,20 @@ def test_page_shows_the_new_sections(fake):
     assert b"built-in method" not in body          # a dict method leaking into the page
 
 
+def test_data_json_says_how_fresh_each_feed_is(fake, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("secret detail http://10.0.0.1/x")
+    monkeypatch.setattr(sources, "s1_items", boom)
+    uf.main(["x", "all"])
+    from dashboard.app import create_app
+    out = create_app().test_client().get("/data.json").get_json()
+    f = out["feeds"]
+    assert set(f) == set(ddata.FEED_NAMES)
+    assert f["forecast"]["hours_since_ok"] < 0.1 and f["forecast"]["failing"] is False
+    assert f["radar"] == {"hours_since_ok": None, "failing": True}
+    assert b"secret detail" not in create_app().test_client().get("/data.json").data
+
+
 def test_page_still_renders_before_any_feed_has_run(fake):
     from dashboard.app import create_app
     body = create_app().test_client().get("/").data
