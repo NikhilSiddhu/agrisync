@@ -14,7 +14,7 @@ touch the modem.
 
     cd ~/agrisync/firmware/synthetic_wifi
     sudo systemctl stop agrisync-serial-bridge
-    export WIFI_SSID='AIRTEL' WIFI_PASSWORD='093001nyn' PI_HOST='192.168.1.39'
+    export WIFI_SSID='your-wifi' WIFI_PASSWORD='your-wifi-password' PI_HOST='192.168.1.39'
     export DEVICE_API_KEY="$(grep '^DEVICE_API_KEY=' ~/agrisync/.env | cut -d= -f2)"
     export CELL_APN='jionet' CF_ACCESS_ID='x' CF_ACCESS_SECRET='x'
     pio run                       # compile only. Fix anything it finds.

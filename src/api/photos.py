@@ -61,6 +61,11 @@ MAX_UPLOAD_BYTES = 1_000_000
 # taking the API down with it.
 MAX_ZIP_FILES = 1500
 
+# What one approved visitor may take in a single request. Generous for
+# real use, small enough that nobody can ask a Pi to build a zip of the
+# entire season in memory by accident.
+MAX_SELECTED_DOWNLOAD = 300
+
 
 def photo_dir() -> Path:
     return Path(current_app.config.get("PHOTO_DIR") or "data/canopy").expanduser()
@@ -174,10 +179,34 @@ def ask():
     return redirect(url_for("photos.gallery"))
 
 
+# How many of the newest images anyone signed in may view. The dashboard
+# shows these as a taste; the archive still needs approval. Kept small and
+# recomputed per request, so it can never drift into "most of the season".
+TEASER_COUNT = 4
+
+
+def _teaser_names():
+    """Filenames of the newest TEASER_COUNT images, newest first."""
+    d = photo_dir()
+    if not d.is_dir():
+        return set()
+    files = [p for p in d.iterdir()
+             if p.is_file() and p.suffix.lower() in ALLOWED_EXT
+             and SAFE_NAME.match(p.name)]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return {p.name for p in files[:TEASER_COUNT]}
+
+
 @bp.get("/photos/img/<name>")
 def image(name):
     email = _viewer()
-    if not email or not visitors.is_granted(email):
+    if not email:
+        abort(403)
+
+    # Approved sees everything. Everyone else signed in sees the newest few,
+    # and the list is rebuilt here rather than trusted from the page - the
+    # browser asking for a filename proves nothing about which file it is.
+    if not visitors.is_granted(email) and name not in _teaser_names():
         abort(403)
 
     if not SAFE_NAME.match(name) or Path(name).suffix.lower() not in ALLOWED_EXT:
@@ -233,6 +262,59 @@ def download_all():
     buf.seek(0)
 
     current_app.logger.info("%s downloaded %d images as zip", email, len(files))
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    return send_file(buf, mimetype="application/zip", as_attachment=True,
+                     download_name=f"agrisync-canopy-{stamp}.zip")
+
+
+@bp.post("/photos/download")
+def download_selected():
+    """Zip of the images the visitor picked. Any approved account, not just admin.
+
+    Every name is checked against SAFE_NAME and resolved inside the photo
+    directory before it is read, so a crafted name cannot reach a file
+    elsewhere on the disk. The regex alone would probably do; the resolve()
+    check means a mistake in the regex is not enough on its own.
+    """
+    email = _viewer()
+    if not email or not visitors.is_granted(email):
+        abort(403)
+
+    names = request.form.getlist("name")
+    if not names:
+        return redirect(url_for("photos.gallery"))
+    if len(names) > MAX_SELECTED_DOWNLOAD:
+        return jsonify({"error": f"too many at once, cap is "
+                                 f"{MAX_SELECTED_DOWNLOAD}"}), 413
+
+    d = photo_dir()
+    picked = []
+    for name in names:
+        if not SAFE_NAME.match(name) or Path(name).suffix.lower() not in ALLOWED_EXT:
+            continue
+        target = d / name
+        try:
+            if target.resolve().parent != d.resolve():
+                continue
+            if target.is_file():
+                picked.append(target)
+        except Exception:
+            continue
+
+    if not picked:
+        return jsonify({"error": "nothing to download"}), 404
+
+    buf = io.BytesIO()
+    # ZIP_STORED: JPEGs are already compressed. Deflating them again costs Pi
+    # CPU and saves a percent or two.
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
+        for f in picked:
+            z.write(f, arcname=f.name)
+    buf.seek(0)
+
+    current_app.logger.info("%s downloaded %d selected image(s)",
+                            email, len(picked))
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     return send_file(buf, mimetype="application/zip", as_attachment=True,

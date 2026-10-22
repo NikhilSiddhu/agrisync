@@ -27,7 +27,7 @@
 #include "mbedtls/md.h"
 
 // ======================== CHANGE THIS ========================
-#define HMAC_SECRET "ca5aa8bde22fb03f70f8ad24740ac39238071967128b37eaae678b11d16ea514"
+#define HMAC_SECRET "PUT_THE_SECRET_HERE"
 // =============================================================
 
 #define API_HOST "ingest.agrisync.tech"

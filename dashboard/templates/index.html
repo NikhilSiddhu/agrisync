@@ -4,7 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Dashboard | AgriSync</title>
-<meta name="description" content="Live field data from the AgriSync station in {{ site.name }}, {{ site.region }} — cabbage microclimate measured at the leaf, every five minutes."/>
+<meta name="description" content="Live field data from the AgriSync station in {{ site.name }}, {{ site.region }} — cabbage field microclimate, measured every five minutes."/>
 <meta name="theme-color" content="#f4f2ec"/>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233f5e39'><path d='M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z'/></svg>"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -508,6 +508,74 @@ body.ag-in .only-out{ display:none; }
   border-bottom:1px solid rgba(92,115,64,.35); }
 .risk-empty a:hover{ border-bottom-color:var(--moss); }
 </style>
+<style>
+.thumb-real{
+  display:block; aspect-ratio:4/3; border-radius:10px; overflow:hidden;
+  border:1px solid var(--line); background:#e8e5db;
+}
+.thumb-real img{ width:100%; height:100%; object-fit:cover; display:block;
+  transition:transform .3s ease; }
+.thumb-real:hover img{ transform:scale(1.04); }
+.thumb-more{ margin:1rem 0 0; text-align:center; font-size:.88rem; }
+.thumb-more a{ color:var(--moss); text-decoration:none;
+  border-bottom:1px solid rgba(92,115,64,.35); }
+.thumb-more a:hover{ border-bottom-color:var(--moss); }
+</style>
+<style>
+/* Four across, centred, capped so they never stretch into odd wide shapes on
+   a big screen. The placeholder grid keeps its old auto-fill behaviour. */
+.img-grid--thumbs{
+  grid-template-columns:repeat(4, minmax(0, 200px));
+  justify-content:center;
+}
+@media (max-width:720px){
+  .img-grid--thumbs{ grid-template-columns:repeat(2, minmax(0, 200px)); }
+}
+
+/* Not a button. Nothing happens when you press it, and something that looks
+   pressable but is not is worse than something that plainly is not. */
+.btn-wait{
+  display:inline-flex; align-items:center; gap:.5rem;
+  padding:.7rem 1.35rem; border-radius:999px;
+  font-size:.78rem; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--amber); background:rgba(157,123,47,.09);
+  border:1px dashed rgba(157,123,47,.45);
+  cursor:default;
+}
+.btn-wait svg{ width:14px; height:14px; }
+</style>
+<style>
+  /* AGRISYNC-LEVELS-2026-10: disease pressure as levels, estimated wetness, small-phone fixes */
+  .lvl-meter{display:flex;gap:4px;flex:none;}
+  .lvl-meter i{display:block;width:24px;height:6px;border-radius:999px;background:rgba(63,94,57,.14);}
+  .lvl-meter.low i:first-child{background:var(--moss);}
+  .lvl-meter.rising i:nth-child(-n+2){background:var(--amber);}
+  .lvl-meter.high i{background:var(--rust);}
+  .lvl{width:66px;text-align:right;font-size:.74rem;font-weight:700;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--moss);}
+  .lvl.rising{color:var(--amber);} .lvl.high{color:var(--rust);}
+  @media (max-width:520px){
+    .risk{flex-wrap:wrap;row-gap:.5rem;}
+    .risk-n{flex:1 1 100%;}
+    .lvl{width:auto;text-align:left;}
+  }
+  /* A plain 1fr column cannot shrink below its content, so a chart canvas sized
+     on a wider screen pushed 360px phones 20px sideways. */
+  .g-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .g-charts{grid-template-columns:minmax(0,1fr);}
+  @media (min-width:760px){.g-metrics{grid-template-columns:repeat(4,minmax(0,1fr));}}
+  @media (min-width:900px){.g-charts{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  .g-charts > *, .g-metrics > *{min-width:0;}
+  /* "100 /100" broke onto two lines on phones and tablets. */
+  .metric .n{white-space:nowrap;}
+  @media (max-width:420px){.metric .n{font-size:1.8rem;}}
+  @media (max-width:340px){.metric .n{font-size:1.5rem;}}
+  @media (min-width:760px) and (max-width:899px){.metric .n{font-size:2.1rem;}}
+  /* The Leaf column was cut off on small phones. Let the table scroll instead. */
+  .rt-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  @media (max-width:420px){.rt thead th,.rt tbody td{padding-left:.6rem;padding-right:.6rem;}}
+</style>
 </head>
 <body id="top">
 
@@ -524,6 +592,7 @@ body.ag-in .only-out{ display:none; }
     <a href="https://agrisync.tech/#what">Overview</a>
     <a href="https://agrisync.tech/#how">How it works</a>
     <a href="https://agrisync.tech/#engine">Intelligence</a>
+    <a href="https://agrisync.tech/#status">Status</a>
     <a href="https://agrisync.tech/#about">About</a>
     <a href="https://agrisync.tech/#stack">Stack</a>
   </nav>
@@ -535,11 +604,12 @@ body.ag-in .only-out{ display:none; }
     <div class="section-head reveal">
       <span class="eyebrow">Live from the field</span>
       <h2>{{ site.name }} station, <span class="serif">speaking now.</span></h2>
-      <p class="lede">Cabbage microclimate measured at the leaf, every five minutes, in
+      <p class="lede">Cabbage field microclimate, measured every five minutes, in
       {{ site.name }}, {{ site.region }}.</p>
       <div style="margin-top:1.6rem">
         <span class="livepill">
           {% if latest and latest.online %}<span class="ldot on"></span>Live · {{ latest.observed_at }} IST
+          {% elif latest and latest.receiving and latest.incoming_flagged %}<span class="ldot off"></span>Receiving, but readings are failing checks · last good {{ latest.observed_at }} IST
           {% elif latest %}<span class="ldot off"></span>Last reading {{ latest.age_minutes|round|int }} min ago
           {% else %}<span class="ldot"></span>Waiting for the first reading{% endif %}
         </span>
@@ -558,7 +628,7 @@ body.ag-in .only-out{ display:none; }
         <span class="l">Condensation below this</span></div>
       <div class="card metric"><span class="tag">Leaf</span>
         <span class="n" id="v-wet">{% if latest and latest.leaf_wetness is not none %}{{ latest.leaf_wetness|round(0)|int }}<span class="u"> /100</span>{% else %}—{% endif %}</span>
-        <span class="l">Wetness</span></div>
+        <span class="l">Wetness, estimated</span></div>
     </div>
   </div>
 </section>
@@ -604,7 +674,7 @@ body.ag-in .only-out{ display:none; }
         <span class="n">{{ stats.humidity_mean }}<span class="u"> %</span></span><span class="l">Humidity</span></div>
       <div class="card metric"><span class="tag">Wet</span>
         <span class="n">{% if wet.available %}{{ wet.hours }}<span class="u"> h</span>{% else %}—{% endif %}</span>
-        <span class="l">Leaf wet hours</span></div>
+        <span class="l">Leaf wet hours, estimated</span></div>
     </div>
     {% endif %}
   </div>
@@ -623,12 +693,12 @@ body.ag-in .only-out{ display:none; }
         <div class="risk">
           <div class="risk-n"><b>{{ d.name }}{% if not d.sourced %}<span class="est">Estimated</span>{% endif %}</b>
             <span class="sp">{{ d.pathogen }}</span></div>
-          <div class="bar {{ 'high' if d.pressure > 0.66 else 'mid' if d.pressure > 0.33 else '' }}">
-            <span style="width:{{ (d.pressure*100)|round|int }}%"></span></div>
-          <div class="pct">{{ (d.pressure*100)|round|int }}%</div>
+          {%- set lvl = 'high' if d.pressure > 0.66 else ('rising' if d.pressure > 0.33 else 'low') %}
+          <div class="lvl-meter {{ lvl }}" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="lvl {{ lvl }}">{{ lvl|capitalize }}</div>
         </div>
         {% endfor %}
-        <p class="risk-note">Uncalibrated infection pressure, not a prediction.
+        <p class="risk-note">Levels, not percentages: this is uncalibrated infection pressure, scored against published thresholds and never checked against a real outbreak. Not a prediction.
           <a href="https://agrisync.tech/#engine">How this is calculated →</a></p>
       {% else %}
         {#- An empty panel under a heading that promises scores reads as a
@@ -676,7 +746,7 @@ body.ag-in .only-out{ display:none; }
           <table class="rt">
             <thead>
               <tr><th>Time</th><th>Air</th><th>Humidity</th>
-                  <th>Dew point</th><th>Leaf</th></tr>
+                  <th>Dew point</th><th>Leaf (est.)</th></tr>
             </thead>
             <tbody>
             {% for r in table %}
@@ -752,9 +822,21 @@ body.ag-in .only-out{ display:none; }
 
     <div class="card lockable reveal">
       <div class="lock-body">
-        <div class="img-grid">
-          {% for _ in range(8) %}<div class="img-cell"></div>{% endfor %}
+        <!-- AGDEBUG member={{ member }} granted={{ can_see_photos }} thumbs={{ thumbs|length }} viewer={{ viewer.email }} -->
+        <div class="img-grid{% if thumbs %} img-grid--thumbs{% endif %}">
+          {%- if thumbs %}
+            {%- for n in thumbs %}
+          <a class="thumb-real" href="/photos/img/{{ n }}" target="_blank" rel="noopener">
+            <img src="/photos/img/{{ n }}" alt="Canopy" loading="lazy">
+          </a>
+            {%- endfor %}
+          {%- else %}
+            {%- for _ in range(8) %}<div class="img-cell"></div>{%- endfor %}
+          {%- endif %}
         </div>
+        {#- VIEWALL_REMOVED. The Canopy photographs button below goes to the
+            same place; two controls for one action just makes a reader stop
+            and work out whether they differ. -#}
       </div>
 
       <div class="lock-veil">
@@ -815,8 +897,7 @@ body.ag-in .only-out{ display:none; }
   <div class="container">
     <div class="connect reveal foot-cta-social">
       <h3>Built in the <span class="serif">open.</span></h3>
-      <p>A solar field station in Hapur, measuring cabbage microclimate at the
-        leaf. Notes, failures and progress as it goes up.</p>
+      <p>A solar field station in Hapur, measuring cabbage field microclimate. Notes, failures and progress as it goes up.</p>
       <div style="display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap">
         <a class="btn btn-greenglass"
            href="https://www.linkedin.com/in/nikhil-siddhu-411406366"
@@ -873,7 +954,7 @@ body.ag-in .only-out{ display:none; }
       {label:'Air',data:S.air,borderColor:C('--green'),fill:false},
       {label:'Dew point',data:S.dew,borderColor:C('--amber'),borderDash:[5,4],fill:false}
     ].concat(S.leaf && S.leaf.some(function(v){return v!==null;})
-      ? [{label:'Leaf',data:S.leaf,borderColor:C('--rust'),fill:false}] : [])},options:base});
+      ? [{label:'Leaf (est.)',data:S.leaf,borderColor:C('--rust'),fill:false}] : [])},options:base});
 
     new Chart(document.getElementById('c-hum'),{type:'line',data:{labels:S.labels,datasets:[
       {label:'Humidity %',data:S.humidity,borderColor:C('--moss'),

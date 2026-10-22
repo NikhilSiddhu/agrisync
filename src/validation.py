@@ -23,7 +23,7 @@ RANGES = {
     "dew_point_c": (-25.0, 45.0),
     "leaf_wetness": (0.0, 100.0),
     "rain_analog": (0.0, 4095.0),      # 12-bit ADC
-    "rain_tips": (0.0, 1_000_000.0),
+    # "rain_tips" not range-checked: it is a running counter, not a measurement (10 Oct 2026)
     "soil_moisture_pct": (0.0, 100.0),
     "soil_temp_c": (-15.0, 60.0),
     "voc_index": (0.0, 500.0),

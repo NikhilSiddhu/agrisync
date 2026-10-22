@@ -103,18 +103,32 @@ def site():
 
 
 def latest():
-    """Most recent reading, trimmed to fields that are safe to publish."""
-    doc = _db().readings.find_one(sort=[("ts", -1)])
-    if not doc:
+    """Newest CLEAN reading, for the tiles and the Live badge.
+
+    Changed 10 Oct 2026. It used to return the newest row of any quality, so a
+    box sending nothing but flagged rows still showed Live. Now online means
+    good data is arriving, and incoming_flagged means rows are arriving but
+    failing the plausibility checks.
+    """
+    db = _db()
+    newest = db.readings.find_one(sort=[("ts", -1)])
+    if not newest:
         return None
+    doc = db.readings.find_one({"quality_flags": {"$exists": False}},
+                               sort=[("ts", -1)]) or newest
+    now = datetime.now(timezone.utc)
 
-    ts = doc.get("ts")
-    local = _local(ts)
-    age_min = None
-    if ts is not None:
+    def _age(d):
+        ts = d.get("ts")
+        if ts is None:
+            return None
         stamp = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-        age_min = (datetime.now(timezone.utc) - stamp).total_seconds() / 60.0
+        return (now - stamp).total_seconds() / 60.0
 
+    age_min = _age(doc)
+    newest_age = _age(newest)
+    local = _local(doc.get("ts"))
+    clean = not doc.get("quality_flags")
     return {
         "air_temp_c": doc.get("air_temp_c"),
         "humidity_pct": doc.get("humidity_pct"),
@@ -125,9 +139,11 @@ def latest():
         "rain_analog": doc.get("rain_analog"),
         "observed_at": local.strftime("%d %b %Y, %H:%M") if local else None,
         "age_minutes": round(age_min, 1) if age_min is not None else None,
-        "online": bool(age_min is not None and age_min < STALE_MINUTES),
+        "online": bool(clean and age_min is not None and age_min < STALE_MINUTES),
         "sensors": doc.get("sensors") or {},
-        "suspect": bool(doc.get("quality_flags")),
+        "suspect": not clean,
+        "receiving": bool(newest_age is not None and newest_age < STALE_MINUTES),
+        "incoming_flagged": bool(newest.get("quality_flags")),
     }
 
 
@@ -342,6 +358,25 @@ def span():
         "readings": total,
         "since": ts.astimezone().strftime("%d %B %Y"),
     }
+
+
+def recent_photos(limit=4):
+    """Newest canopy image filenames, for the dashboard thumbnails.
+
+    Sorted by modification time rather than filename: the camera has no clock,
+    and its counters only order within a single boot - after a reset it starts
+    at 000000 again, so filename order would put a fresh image behind an old
+    one.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+    d = _Path(_os.getenv("PHOTO_DIR", "data/canopy")).expanduser()
+    if not d.is_dir():
+        return []
+    files = [p for p in d.iterdir()
+             if p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return [p.name for p in files[:limit]]
 
 
 def photo_count():

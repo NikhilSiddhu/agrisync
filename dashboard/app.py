@@ -76,6 +76,22 @@ def create_app():
     # with the same key, so a login on either is recognised by both.
     app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "")
 
+    # visitors.is_granted() reads Mongo, and src/db.py holds its connection in
+    # a module-level global that init_db() sets. Without this call every
+    # approval check raises inside this process.
+    #
+    # Failure here is not fatal on purpose: the dashboard's own reader has a
+    # separate connection, so charts and readings keep working even if this
+    # one cannot be established. Only the photo-approval check degrades.
+    app.config["MONGO_URI"] = os.getenv(
+        "MONGO_URI", "mongodb://127.0.0.1:27017/agrisync")
+    try:
+        from src.db import init_db
+        init_db(app)
+    except Exception:
+        app.logger.warning("no mongo connection for approval checks",
+                           exc_info=True)
+
     @app.after_request
     def headers(resp):
         resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -153,12 +169,29 @@ def create_app():
             app.logger.warning("readings table unavailable", exc_info=True)
             payload["table"] = []
 
+        # Signed in is not the same as approved for images. Thumbnails are
+        # served from /photos/img/, which 403s for anyone not granted - so
+        # asking the browser to load them for a member who has not been
+        # approved would just fill the section with broken images.
+        # is_granted decides the ARCHIVE. The four newest are shown to any
+        # signed-in visitor - enough to see what the camera looks at, not
+        # enough to be the dataset.
+        payload["can_see_photos"] = False   # approved: gallery, downloads
+        payload["has_requested"] = False    # asked, still waiting
+        payload["thumbs"] = []
+        payload["photo_total"] = 0
+
         if member:
             try:
                 from src import visitors
-                payload["is_admin"] = visitors.is_admin(who["email"])
+                email = who["email"]
+                payload["is_admin"] = visitors.is_admin(email)
+                payload["can_see_photos"] = visitors.is_granted(email)
+                payload["has_requested"] = visitors.has_requested(email)
+                payload["thumbs"] = data.recent_photos(4)
+                payload["photo_total"] = data.photo_count()
             except Exception:
-                pass
+                app.logger.warning("photo access check failed", exc_info=True)
 
         resp = app.make_response(render_template("index.html", **payload))
         resp.headers["Cache-Control"] = cache
@@ -189,6 +222,18 @@ def create_app():
         except Exception as exc:
             return jsonify({"error": "data unavailable",
                             "detail": str(exc)[:120]}), 503
+
+    # agrisync.tech is static on GitHub Pages and reads this to show live
+    # readings. Listed origins, not a wildcard - this endpoint carries no
+    # credentials, but a wildcard is a habit worth not forming.
+    @app.after_request
+    def data_cors(resp):
+        if request.path == "/data.json":
+            origin = (request.headers.get("Origin") or "").rstrip("/")
+            if origin in ("https://agrisync.tech", "https://www.agrisync.tech"):
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Vary"] = "Origin"
+        return resp
 
     @app.get("/health")
     def health():
