@@ -360,6 +360,238 @@ def span():
     }
 
 
+# ============================================================== feeds =====
+# Written by scripts/update_feeds.py on a timer; read here and nowhere else.
+# Every function returns {"available": False} rather than raising, so a feed
+# that has not run yet, or failed, costs the page one quiet panel and nothing
+# more.
+
+LEAD_LABEL = {12: "12 h", 24: "24 h", 36: "36 h", 48: "48 h", 60: "60 h", 72: "72 h"}
+
+
+def _feed(name):
+    try:
+        return _db().feeds.find_one({"_id": name})
+    except Exception:
+        return None
+
+
+def _age_hours(doc):
+    ts = (doc or {}).get("generated_at")
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
+
+
+def forecast_risk():
+    doc = _feed("forecast")
+    if not doc or not doc.get("rows"):
+        return {"available": False}
+    age = _age_hours(doc)
+    rows = []
+    for r in doc["rows"]:
+        cells = []
+        for c in r["cells"]:
+            ens = c.get("ens") or {}
+            n = ens.get("n") or 0
+            agree = max(ens.get("low", 0), ens.get("rising", 0), ens.get("high", 0)) if n else 0
+            cells.append({
+                "lead": LEAD_LABEL.get(c["lead_h"], f"{c['lead_h']} h"),
+                "when": _local(c["at"]).strftime("%a %H:%M") if c.get("at") else "",
+                "level": c.get("level"),
+                "ens_high": ens.get("high"), "ens_rising": ens.get("rising"),
+                "ens_low": ens.get("low"), "ens_n": n, "ens_agree": agree,
+            })
+        rows.append({"name": r["name"], "pathogen": r["pathogen"],
+                     "sourced": r["sourced"], "cells": cells})
+    order = {"high": 0, "rising": 1, "low": 2, None: 3}
+    rows.sort(key=lambda r: min(order[c["level"]] for c in r["cells"]))
+    hourly = doc.get("hourly") or []
+    return {
+        "available": True, "stale": age is not None and age > 8,
+        "issued": _local(doc["generated_at"]).strftime("%d %b, %H:%M"),
+        "source": doc.get("source"),
+        "members": (doc.get("ensemble") or {}).get("members"),
+        "rows": rows,
+        "wet_hours_ahead": sum(1 for h in hourly if h.get("wet")),
+        "chart": {
+            "labels": [_local(h["time"]).strftime("%a %H:%M") for h in hourly],
+            "temp": [h.get("temp_c") for h in hourly],
+            "rh": [h.get("rh_pct") for h in hourly],
+            "wet": [100 if h.get("wet") else 0 for h in hourly],
+        },
+    }
+
+
+def comparison():
+    doc = _feed("comparison")
+    if not doc or not doc.get("series"):
+        return {"available": False}
+    s = doc["series"]
+    st = doc.get("stats") or {}
+    until = doc.get("era5_until")
+    rain = doc.get("rain") or {}
+    sun = doc.get("sun") or {}
+    day = (lambda iso: datetime.fromisoformat(iso).strftime("%d %b") if iso else None)
+    return {
+        "available": True,
+        "stats": st,
+        "era5_until": _local(until).strftime("%d %b") if until else None,
+        "grid": doc.get("era5") or {},
+        "modelled_days": len(doc.get("modelled_days") or []),
+        "chart": {
+            "labels": [datetime.fromisoformat(x["date"]).strftime("%d %b") for x in s],
+            "field_temp": [x.get("field_temp") for x in s],
+            "era5_temp": [x.get("era5_temp") for x in s],
+            "field_rh": [x.get("field_rh") for x in s],
+            "era5_rh": [x.get("era5_rh") for x in s],
+            "rain": [x.get("rain_mm") for x in s],
+        },
+        "rain": {"total": rain.get("total_mm"), "wet_days": rain.get("wet_days"),
+                 "from": day(rain.get("from")), "until": day(rain.get("until"))}
+                if rain.get("days") else None,
+        "sun": sun.get("mean_kwh_m2") if sun.get("days") else None,
+    }
+
+
+def _ms(dt):
+    """Epoch milliseconds, for charts on a shared time axis."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def _season_axis():
+    """Same x range on every chart from orbit, so dates line up."""
+    start = os.getenv("SEASON_START", "2026-08-01")
+    try:
+        s = datetime.fromisoformat(start).replace(tzinfo=timezone.utc) - timedelta(hours=5, minutes=30)
+    except ValueError:
+        s = datetime(2026, 7, 31, 18, 30, tzinfo=timezone.utc)
+    return [_ms(s), _ms(datetime.now(timezone.utc))]
+
+
+def satellite():
+    doc = _feed("satellite")
+    if not doc:
+        return {"available": False}
+    series = doc.get("series") or []
+    latest = series[-1] if series else None
+    return {
+        "available": bool(series),
+        "passes": doc.get("passes", 0), "clear": doc.get("clear", 0),
+        "radius_m": doc.get("radius_m"),
+        "latest": ({"ndvi": latest["ndvi"],
+                    "date": _local(latest["acquired"]).strftime("%d %b")} if latest else None),
+        "chart": {"points": [{"x": _ms(x["acquired"]), "y": x["ndvi"]} for x in series],
+                  "range": _season_axis()},
+    }
+
+
+def radar():
+    doc = _feed("radar")
+    if not doc:
+        return {"available": False}
+    series = [x for x in doc.get("series") or [] if x.get("rvi") is not None]
+    if not series:
+        return {"available": False}
+
+    def pts(orbit):
+        # Descending passes cross Hapur about 06:15 IST, ascending about 18:20.
+        return [{"x": _ms(x["acquired"]), "y": x["rvi"]} for x in series if x.get("orbit") == orbit]
+
+    # One pass is mostly speckle. The line is the median of five passes
+    # centred on each one, narrowing at the ends.
+    vals = [x["rvi"] for x in series]
+    trend = []
+    for i, x in enumerate(series):
+        w = sorted(vals[max(0, i - 2): i + 3])
+        trend.append({"x": _ms(x["acquired"]), "y": round(w[len(w) // 2], 3)})
+    latest = series[-1]
+    return {
+        "available": True, "passes": len(series), "radius_m": doc.get("radius_m"),
+        "latest": {"rvi": latest["rvi"], "trend": trend[-1]["y"],
+                   "date": _local(latest["acquired"]).strftime("%d %b")},
+        "chart": {"morning": pts("descending"), "evening": pts("ascending"),
+                  "trend": trend, "range": _season_axis()},
+    }
+
+
+def optical_gaps():
+    """Days a radar pass looked at the field while no clear optical pass did,
+    within two days either side. The reason radar is here at all."""
+    try:
+        rad = (_feed("radar") or {}).get("series") or []
+        sat = (_feed("satellite") or {}).get("series") or []
+    except Exception:
+        return None
+    if not rad:
+        return None
+    utc = (lambda t: t if t.tzinfo else t.replace(tzinfo=timezone.utc))
+    clear = [utc(x["acquired"]) for x in sat]
+    near = (lambda t: any(abs((t - c).total_seconds()) <= 2 * 86400 for c in clear))
+    return sum(1 for x in rad if not near(utc(x["acquired"])))
+
+
+CHECK_TEXT = {
+    "check": ("Look closer", "warn",
+              "The canopy fell while the weather favoured infection. Worth walking the field "
+              "and logging what you find."),
+    "stress": ("Probably not disease", "",
+               "The canopy fell, but the weather never favoured infection. Water, nutrients, "
+               "a harvest, or haze the cloud mask missed are likelier."),
+    "gap": ("Can't tell", "",
+            "The canopy fell, but the station missed most of those days, so the weather "
+            "side cannot be checked."),
+    "watch": ("Watch", "",
+              "The weather favoured infection, but the canopy has not fallen. Nothing visible "
+              "from orbit yet."),
+    "clear": ("Nothing to explain", "",
+              "The canopy has not fallen and the weather has not favoured infection."),
+    "waiting": ("Waiting", "", "This needs two clear satellite passes."),
+}
+
+
+def disease_or_stress():
+    doc = _feed("check")
+    if not doc:
+        return {"available": False}
+    state = doc.get("state", "waiting")
+    tag, tone, text = CHECK_TEXT.get(state, CHECK_TEXT["waiting"])
+    c = doc.get("canopy") or {}
+    w = doc.get("weather") or {}
+    s = doc.get("since") or {}
+    return {
+        "available": True, "state": state, "tag": tag, "tone": tone, "text": text,
+        "canopy": ({"from": _local(c["from"]).strftime("%d %b"), "to": _local(c["to"]).strftime("%d %b"),
+                    "ndvi_from": c["ndvi_from"], "ndvi_to": c["ndvi_to"], "delta": c["delta"],
+                    "trend": c["trend"]} if c else None),
+        "weather": w or None,
+        "since": s if s.get("days", 0) > 0 else None,
+    }
+
+
+def anomalies():
+    doc = _feed("anomaly")
+    if not doc:
+        return {"available": False}
+    return {"available": True, "flags": doc.get("flags") or [],
+            "checked_hours": doc.get("checked_hours", 0),
+            "baseline_days": doc.get("baseline_days", 0),
+            "stale": (_age_hours(doc) or 0) > 3}
+
+
+def field_log_summary():
+    try:
+        n = _db().field_log.count_documents({})
+        last = _db().field_log.find_one({}, sort=[("date", -1)])
+    except Exception:
+        return {"count": 0, "last": None}
+    return {"count": n, "last": last.get("date") if last else None}
+
+
 def recent_photos(limit=4):
     """Newest canopy image filenames, for the dashboard thumbnails.
 

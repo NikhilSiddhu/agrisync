@@ -108,9 +108,9 @@ def test_nav_points_at_the_real_anchors(client):
 def test_keeps_the_minimum_honesty_on_the_numbers(client):
     """The long explanation lives on agrisync.tech now, but a bare percentage
     labelled 'disease pressure' with no qualifier would be misleading."""
-    r = client.get("/")
-    assert b"not a prediction" in r.data
-    assert b"Uncalibrated" in r.data
+    body = client.get("/").data.lower()
+    assert b"not a prediction" in body
+    assert b"uncalibrated" in body
 
 
 def test_links_back_to_the_main_site_for_the_explanation(client):
@@ -120,10 +120,12 @@ def test_links_back_to_the_main_site_for_the_explanation(client):
 
 
 def test_offers_the_authenticated_route_for_more(client):
+    """More than the public week is behind sign-in: the Connect button, and
+    path links (never a hostname) for the CSV and the photographs."""
     r = client.get("/")
-    assert b"api.agrisync.tech" in r.data
-    assert b"Full history" in r.data
     assert b"Connect" in r.data
+    assert b"/export/readings.csv" in r.data
+    assert b'data-ag-request="data"' in r.data
 
 
 def test_no_secrets_leak_into_the_page(client):
@@ -194,7 +196,9 @@ def test_no_background_attachment_fixed(client):
     assert "background-attachment:" not in body   # the property, not the comment
 
 
-def test_one_social_link_only(client):
+def test_social_links_are_the_owners_only(client):
     body = client.get("/").data
     assert b"linkedin.com/in/nikhil-siddhu" in body
-    assert b"x.com/" not in body
+    assert b"x.com/nikhilsiddhu_" in body
+    for other in (b"facebook.com", b"instagram.com", b"youtube.com", b"twitter.com"):
+        assert other not in body

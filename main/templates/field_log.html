@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>Field log | AgriSync</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root{--paper:#f4f2ec;--line:#e4e1d6;--ink:#20271f;--ink-soft:#5f655a;
+    --green:#3f5e39;--moss:#5c7340;--forest:#3b4738;--amber:#9d7b2f;--rust:#96483c;--r:18px;--maxw:1080px;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter',system-ui,sans-serif;color:var(--ink);background:var(--paper);
+    font-size:1rem;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  a{color:inherit;text-decoration:none;}
+  .serif{font-family:'Instrument Serif',Georgia,serif;font-style:italic;font-weight:400;}
+  .container{max-width:var(--maxw);margin:0 auto;padding:0 1.25rem;}
+  .eyebrow{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.18em;color:var(--green);}
+  .top{display:flex;justify-content:space-between;align-items:center;padding:1.2rem 0;}
+  .brand{display:inline-flex;align-items:center;gap:.5rem;font-weight:700;font-size:1.1rem;color:var(--forest);}
+  .brand svg{width:20px;height:20px;color:var(--green);}
+  .back{font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);}
+  .head{text-align:center;max-width:640px;margin:2rem auto 2rem;}
+  .head h1{font-size:clamp(1.9rem,4.4vw,2.8rem);margin:.7rem 0 0;font-weight:600;letter-spacing:-.02em;line-height:1.12;}
+  .head .serif{color:var(--moss);}
+  .head p{margin:.9rem 0 0;color:var(--ink-soft);}
+  .card{background:rgba(255,255,255,.55);border:1px solid var(--line);border-radius:var(--r);
+    padding:1.5rem;box-shadow:inset 0 1px 0 rgba(255,255,255,.6);margin-bottom:1.25rem;}
+  form{display:grid;gap:1rem;grid-template-columns:repeat(2,minmax(0,1fr));}
+  @media (max-width:640px){form{grid-template-columns:minmax(0,1fr);}}
+  label{display:flex;flex-direction:column;gap:.35rem;font-size:.72rem;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;color:var(--ink-soft);}
+  input,select,textarea{font:inherit;font-size:.95rem;letter-spacing:0;text-transform:none;color:var(--ink);
+    padding:.65rem .75rem;border:1px solid var(--line);border-radius:10px;background:#fff;width:100%;}
+  textarea{min-height:5rem;resize:vertical;}
+  .full{grid-column:1/-1;}
+  .hint{font-size:.78rem;font-weight:400;letter-spacing:0;text-transform:none;color:var(--ink-soft);}
+  button{font:inherit;font-size:.8rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+    padding:.85rem 1.4rem;border-radius:999px;border:0;background:var(--green);color:#fff;cursor:pointer;justify-self:start;}
+  .msg{padding:.7rem 1rem;border-radius:10px;margin-bottom:1rem;font-size:.9rem;}
+  .msg.ok{background:rgba(92,115,64,.12);color:var(--green);}
+  .msg.bad{background:rgba(150,72,60,.1);color:var(--rust);}
+  table{width:100%;border-collapse:collapse;font-size:.88rem;font-variant-numeric:tabular-nums;}
+  th{text-align:left;font-size:.66rem;font-weight:600;text-transform:uppercase;letter-spacing:.12em;
+    color:var(--ink-soft);padding:.55rem .6rem;border-bottom:1px solid var(--line);white-space:nowrap;}
+  td{padding:.6rem .6rem;border-bottom:1px solid rgba(228,225,214,.6);color:var(--ink-soft);vertical-align:top;}
+  td:first-child{color:var(--ink);font-weight:500;white-space:nowrap;}
+  .scroller{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .empty{text-align:center;color:var(--ink-soft);padding:1.5rem 0;}
+  .sev{display:inline-block;min-width:1.6rem;text-align:center;padding:.1rem .4rem;border-radius:999px;
+    background:rgba(92,115,64,.12);color:var(--moss);font-weight:700;font-size:.78rem;}
+  .sev.s3,.sev.s4,.sev.s5{background:rgba(150,72,60,.12);color:var(--rust);}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="top">
+    <a class="brand" href="/"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.05 8.05c-2.73 2.73-2.73 7.15-.02 9.88 1.47-3.4 4.09-6.24 7.36-7.93-2.77 2.34-4.71 5.61-5.39 9.32 2.6 1.23 5.8.78 7.95-1.37C19.43 14.47 20 4 20 4S9.53 4.57 6.05 8.05z"/></svg>AgriSync</a>
+    <a class="back" href="/">&larr; Dashboard</a>
+  </div>
+
+  <div class="head">
+    <span class="eyebrow">Field log</span>
+    <h1>What the plants <span class="serif">actually did.</span></h1>
+    <p>One row per walk through the field, including the ones where nothing was wrong.
+      These rows are what the disease scores will be checked against.</p>
+  </div>
+
+  <div class="card">
+    {% if saved %}<div class="msg ok">Saved. Thank you.</div>{% endif %}
+    {% if error %}<div class="msg bad">
+      {%- if error == 'date' %}That date was not valid.
+      {%- elif error == 'future' %}The date is in the future.
+      {%- elif error == 'affected' %}More plants affected than checked.
+      {%- else %}Some values were missing or out of range.{% endif %} Nothing was saved.</div>{% endif %}
+    <form method="post" action="/admin/field-log">
+      <label>Date<input type="date" name="date" value="{{ today }}" max="{{ today }}" required></label>
+      <label>Crop stage<select name="stage" required>
+        {% for s in stages %}<option value="{{ s }}"{% if s == 'vegetative' %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+      </select></label>
+      <label>What you saw<select name="disease" required>
+        {% for k, v in diseases %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+      </select></label>
+      <label>Severity, 0 to 5<input type="number" name="severity" min="0" max="5" value="0" required>
+        <span class="hint">0 none, 1 a few spots, 3 spread on many leaves, 5 plants dying</span></label>
+      <label>Plants checked<input type="number" name="plants_checked" min="0" value="20" required></label>
+      <label>Plants with symptoms<input type="number" name="plants_affected" min="0" value="0" required></label>
+      <label class="full">Notes<textarea name="notes" maxlength="500" placeholder="Where in the field, which leaves, any spraying done"></textarea></label>
+      <button type="submit" class="full">Add to the log</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="scroller">
+    {% if rows %}
+    <table>
+      <thead><tr><th>Date</th><th>Stage</th><th>Seen</th><th>Severity</th><th>Affected</th><th>Notes</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr><td>{{ r.date }}</td><td>{{ r.stage }}</td><td>{{ labels.get(r.disease, r.disease) }}</td>
+          <td><span class="sev s{{ r.severity }}">{{ r.severity }}</span></td>
+          <td>{{ r.plants_affected }} of {{ r.plants_checked }}</td><td>{{ r.notes }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Nothing logged yet. The first walk through the field is the first row.</p>
+    {% endif %}
+    </div>
+  </div>
+</div>
+</body>
+</html>

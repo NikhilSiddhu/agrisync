@@ -608,6 +608,48 @@ body.ag-in .only-in.member-actions{ display:flex; }
   .photo-door-title{ font-size:1rem; }
 }
 </style>
+<style>
+/* ---- forecast, orbit, cross-check (Oct 2026) -------------------------- */
+.fc{padding:1.2rem 1.2rem 1rem;}
+.fc-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.fc-table{width:100%;border-collapse:collapse;min-width:620px;}
+.fc-table th,.fc-table td{padding:.7rem .45rem;text-align:center;border-bottom:1px solid rgba(63,94,57,.12);vertical-align:middle;}
+.fc-table thead th{font-size:.7rem;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--green);}
+.fc-table thead th span{display:block;margin-top:.15rem;font-size:.72rem;font-weight:500;letter-spacing:0;text-transform:none;color:var(--ink-soft);}
+.fc-table tbody th{text-align:left;font-size:.9rem;font-weight:600;color:var(--ink);min-width:170px;}
+.fc-table tbody th .est{margin-left:.4rem;}
+.fc-table tbody tr:last-child th,.fc-table tbody tr:last-child td{border-bottom:none;}
+.fc-lvl{display:inline-block;min-width:4.6rem;padding:.2rem .5rem;border-radius:999px;font-size:.68rem;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--moss);background:rgba(92,115,64,.12);}
+.fc-lvl.rising{color:var(--amber);background:rgba(157,123,47,.13);}
+.fc-lvl.high{color:#fff;background:var(--rust);}
+.fc-lvl.none{background:none;color:var(--ink-soft);}
+.fc-split{display:flex;width:4.6rem;height:5px;margin:.4rem auto 0;border-radius:999px;overflow:hidden;background:rgba(63,94,57,.1);}
+.fc-split i{display:block;height:100%;}
+.fc-split .h,.fc-key .h{background:var(--rust);} .fc-split .r,.fc-key .r{background:var(--amber);} .fc-split .l,.fc-key .l{background:var(--moss);}
+.fc-key{display:flex;flex-wrap:wrap;gap:.4rem 1rem;justify-content:center;align-items:center;margin:.9rem 0 0;font-size:.78rem;color:var(--ink-soft);}
+.fc-key span{display:inline-flex;align-items:center;gap:.35rem;}
+.fc-key i{display:inline-block;width:14px;height:5px;border-radius:999px;}
+.fc-key em{font-style:normal;opacity:.85;}
+.anom{display:flex;flex-wrap:wrap;gap:.4rem .9rem;justify-content:center;align-items:center;max-width:760px;
+  margin:1.4rem auto 0;padding:.75rem 1rem;border:1px solid var(--line);border-radius:12px;
+  background:rgba(255,255,255,.4);font-size:.86rem;color:var(--ink-soft);text-align:center;}
+.anom-tag{font-size:.64rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--moss);}
+.anom-tag.warn{color:var(--rust);}
+.sat-note{margin:.9rem 0 0;font-size:.84rem;line-height:1.55;color:var(--ink-soft);}
+.dos{margin-top:1.25rem;padding:1.4rem 1.5rem;}
+.dos-head{display:flex;justify-content:space-between;align-items:center;gap:.8rem;flex-wrap:wrap;}
+.dos-state{font-size:.66rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;padding:.28rem .75rem;
+  border-radius:999px;color:var(--moss);background:rgba(92,115,64,.12);}
+.dos-state.warn{color:#fff;background:var(--rust);}
+.dos-text{margin:.85rem 0 0;font-size:1.02rem;line-height:1.55;color:var(--ink);}
+.dos-facts{display:grid;gap:.5rem;margin:1rem 0 0;padding:.9rem 0 0;border-top:1px solid rgba(63,94,57,.12);}
+.dos-facts div{display:grid;grid-template-columns:5.2rem minmax(0,1fr);gap:.8rem;font-size:.86rem;line-height:1.5;}
+.dos-facts dt{font-size:.64rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--green);padding-top:.18rem;}
+.dos-facts dd{margin:0;color:var(--ink-soft);}
+.dos-foot{margin:1rem 0 0;font-size:.78rem;line-height:1.55;color:var(--ink-soft);}
+@media (max-width:420px){.dos{padding:1.15rem 1.1rem;}.dos-facts div{grid-template-columns:minmax(0,1fr);gap:.1rem;}}
+</style>
 </head>
 <body id="top">
 
@@ -755,6 +797,76 @@ body.ag-in .only-in.member-actions{ display:flex; }
     </div>
   </div>
 </section>
+
+<!-- ============================================ forecast ================= -->
+<section class="section" id="forecast">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">The next three days</span>
+      <h2>Pressure, <span class="serif">forecast.</span></h2>
+      <p class="lede">The same scoring, run on the weather forecast for the field.
+        Each column is the 24 hours ending at that time: hours already past from the
+        station, the rest from the forecast.</p>
+    </div>
+    {% if forecast.available %}
+    <div class="card fc reveal">
+      <div class="fc-scroll">
+      <table class="fc-table">
+        <thead><tr><th scope="col">Disease</th>
+          {%- for c in forecast.rows[0].cells %}<th scope="col">{{ c.lead }}<span>{{ c.when }}</span></th>{% endfor %}
+        </tr></thead>
+        <tbody>
+        {%- for r in forecast.rows %}
+          <tr>
+            <th scope="row">{{ r.name }}{% if not r.sourced %}<span class="est">Estimated</span>{% endif %}</th>
+            {%- for c in r.cells %}
+            <td>
+              {%- if c.level %}<span class="fc-lvl {{ c.level }}">{{ c.level|capitalize }}</span>
+              {%- else %}<span class="fc-lvl none">&ndash;</span>{% endif %}
+              {%- if c.ens_n %}
+              <span class="fc-split" title="{{ c.ens_high }} high, {{ c.ens_rising }} rising, {{ c.ens_low }} low, of {{ c.ens_n }} weather runs"><i class="h" style="width:{{ (100 * c.ens_high / c.ens_n)|round(1) }}%"></i><i class="r" style="width:{{ (100 * c.ens_rising / c.ens_n)|round(1) }}%"></i><i class="l" style="width:{{ (100 * c.ens_low / c.ens_n)|round(1) }}%"></i></span>
+              {%- endif %}
+            </td>
+            {%- endfor %}
+          </tr>
+        {%- endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p class="fc-key"><span><i class="h"></i>High</span><span><i class="r"></i>Rising</span><span><i class="l"></i>Low</span>
+        <em>Bar: how the {{ forecast.members }} weather runs split</em></p>
+    </div>
+    <p class="risk-note reveal">{{ forecast.wet_hours_ahead }} wet hour{{ '' if forecast.wet_hours_ahead == 1 else 's' }} forecast in the next 72.
+      Issued {{ forecast.issued }} IST{% if forecast.stale %} (overdue for a refresh){% endif %}, from the {{ forecast.source }},
+      with the ECMWF ensemble for the spread. The spread is in the weather, carried through the same
+      uncalibrated models: not a chance of infection.</p>
+    {% else %}
+    <div class="risk-empty reveal">
+      <p class="risk-empty-h">The forecast has not run yet.</p>
+      <p class="risk-empty-p">It refreshes every three hours.</p>
+    </div>
+    {% endif %}
+
+    {% if anom.available %}
+    <div class="anom reveal">
+      {%- if anom.flags %}
+      <span class="anom-tag warn">Unusual</span>
+      {%- for f in anom.flags[:3] %}<span>{{ f.label }} {{ f.value }}{{ f.unit }} at {{ f.when }}, against a typical {{ f.typical }}{{ f.unit }}.</span>{% endfor %}
+      {%- elif anom.baseline_days < 5 %}
+      <span class="anom-tag">Learning</span>
+      <span>The unusual-conditions check needs five days of readings to learn what normal looks like.</span>
+      {%- elif not anom.checked_hours %}
+      <span class="anom-tag">Waiting</span>
+      <span>No full hour of readings in the last six to check against the previous {{ anom.baseline_days }} days.</span>
+      {%- else %}
+      <span class="anom-tag">Normal</span>
+      <span>Nothing unusual in the last {{ anom.checked_hours }} hour{{ '' if anom.checked_hours == 1 else 's' }}, compared with the same hours over the previous {{ anom.baseline_days }} days.</span>
+      {%- endif %}
+    </div>
+    {% endif %}
+  </div>
+</section>
+
 
 
 <!-- ============================================ every reading ============ -->
@@ -922,6 +1034,125 @@ body.ag-in .only-in.member-actions{ display:flex; }
   </div>
 </section>
 
+<!-- ============================================ from orbit ================ -->
+<section class="section" id="orbit">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">From orbit</span>
+      <h2>The field, <span class="serif">from space.</span></h2>
+      <p class="lede">Two free satellites watch the same small square of the field. Sentinel-2
+        sees colour, so cloud stops it. Sentinel-1 is radar and sees through cloud. On both,
+        higher means more leaf.</p>
+    </div>
+    {% if sat.available or radar.available %}
+    <div class="grid g-charts reveal">
+      <div class="card"><span class="tag">Greenness &middot; Sentinel-2 NDVI</span>
+        {% if sat.available %}<div class="chart-wrap"><canvas id="c-ndvi"></canvas></div>
+        {% else %}<p class="sat-note">No clear optical passes processed yet.</p>{% endif %}</div>
+      <div class="card"><span class="tag">Radar &middot; Sentinel-1 RVI</span>
+        {% if radar.available %}<div class="chart-wrap"><canvas id="c-rvi"></canvas></div>
+        {% else %}<p class="sat-note">No radar passes processed yet.</p>{% endif %}</div>
+    </div>
+    <div class="grid g-metrics reveal" style="margin-top:1.25rem">
+      <div class="card metric"><span class="tag">Latest NDVI</span>
+        <span class="n">{{ '%.2f'|format(sat.latest.ndvi) if sat.available else '&mdash;'|safe }}</span>
+        <span class="l">{{ 'Clear pass, ' ~ sat.latest.date if sat.available else 'No clear pass yet' }}</span></div>
+      {#- sat['clear'], not sat.clear: on a dict that is the clear() method. #}
+      <div class="card metric"><span class="tag">Clear optical</span>
+        <span class="n">{{ sat['clear'] or 0 }}<span class="u"> of {{ sat['passes'] or 0 }}</span></span>
+        <span class="l">Passes since August</span></div>
+      <div class="card metric"><span class="tag">Radar</span>
+        <span class="n">{{ radar.passes if radar.available else 0 }}</span>
+        <span class="l">Passes since August, cloud or not</span></div>
+      <div class="card metric"><span class="tag">Radar only</span>
+        <span class="n">{{ optical_gaps if optical_gaps is not none else '&mdash;'|safe }}</span>
+        <span class="l">Radar passes with no clear optical view within two days</span></div>
+    </div>
+    <p class="risk-note reveal">Both read a {{ ((sat.radius_m or radar.radius_m or 15) * 2)|int }} m square
+      on the field. NDVI is its mean with cloud and shadow pixels removed. The radar index is
+      4&nbsp;VH&nbsp;/&nbsp;(VV&nbsp;+&nbsp;VH) from calibrated backscatter; one pass on its own is mostly
+      speckle, so read the line, the median of five passes. Morning and evening passes view the
+      field from opposite sides.</p>
+    {% else %}
+    <div class="risk-empty reveal">
+      <p class="risk-empty-h">No satellite passes processed yet.</p>
+      <p class="risk-empty-p">They are read once a day.</p>
+    </div>
+    {% endif %}
+
+    {% if check.available %}
+    {% set w = check.weather %}{% set s = check.since %}
+    <div class="card dos reveal">
+      <div class="dos-head"><span class="tag">Disease, or just stress?</span>
+        <span class="dos-state {{ check.tone }}">{{ check.tag }}</span></div>
+      <p class="dos-text">{{ check.text }}</p>
+      {% if check.canopy and w %}
+      <dl class="dos-facts">
+        <div><dt>Canopy</dt><dd>NDVI {{ '%.2f'|format(check.canopy.ndvi_from) }} on {{ check.canopy.from }},
+          {{ '%.2f'|format(check.canopy.ndvi_to) }} on {{ check.canopy.to }}
+          ({{ '%+.2f'|format(check.canopy.delta) }}, {{ check.canopy.trend }})</dd></div>
+        <div><dt>Weather</dt><dd>{{ w.high }} of {{ w.days }} days scored high{% if w.rising %},
+          {{ w.rising }} rising{% endif %}{% if w.covered < w.days %}; {{ w.days - w.covered }}
+          with too little station data to score{% endif %}</dd></div>
+        {% if s %}<div><dt>Since</dt><dd>{{ s.high }} high day{{ '' if s.high == 1 else 's' }} of
+          {{ s.days }} since that pass. The next clear pass shows whether the canopy held.</dd></div>{% endif %}
+      </dl>
+      {% endif %}
+      <p class="dos-foot">A fixed rule, not a trained model. It points at disease only when the canopy
+        falls by 0.08 or more against the greenest clear pass of the three weeks before, and the
+        station scored infection weather over the same days. Not yet checked against the field log.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- ============================================ cross-checked ============ -->
+<section class="section" id="checked">
+  <div class="container">
+    <div class="section-head reveal">
+      <span class="eyebrow">Cross-checked</span>
+      <h2>The sensors, <span class="serif">checked.</span></h2>
+      <p class="lede">The station against ERA5-Land, a global weather reanalysis on a 9 km grid.
+        Close agreement says the box reads true. Where the station was down, the reanalysis is
+        the only record, and it is modelled, not measured.</p>
+    </div>
+    {% if compare.available %}
+    <div class="grid g-charts reveal">
+      <div class="card"><span class="tag">Daily mean temperature</span>
+        <div class="chart-wrap"><canvas id="c-cmp-t"></canvas></div></div>
+      <div class="card"><span class="tag">Daily mean humidity</span>
+        <div class="chart-wrap"><canvas id="c-cmp-h"></canvas></div></div>
+    </div>
+    {% set t = compare.stats.temp %}{% set h = compare.stats.rh %}
+    <div class="grid g-metrics reveal" style="margin-top:1.25rem">
+      <div class="card metric"><span class="tag">Temperature</span>
+        <span class="n">{{ '%+.1f'|format(t.bias) if t else '&mdash;'|safe }}<span class="u"> °C</span></span>
+        <span class="l">Station minus ERA5-Land{% if t and t.r is not none %}<br>Hourly r {{ '%.2f'|format(t.r) }}, {{ t.n_hours }} hours{% endif %}</span></div>
+      <div class="card metric"><span class="tag">Humidity</span>
+        <span class="n">{{ '%+.1f'|format(h.bias) if h else '&mdash;'|safe }}<span class="u"> pts</span></span>
+        <span class="l">Station minus ERA5-Land{% if h and h.r is not none %}<br>Hourly r {{ '%.2f'|format(h.r) }}{% endif %}</span></div>
+      <div class="card metric"><span class="tag">Rain</span>
+        <span class="n">{{ (compare.rain.total|round|int) if compare.rain else '&mdash;'|safe }}<span class="u"> mm</span></span>
+        <span class="l">{% if compare.rain %}ERA5, {{ compare.rain['from'] }} to {{ compare.rain.until }}<br>{{ compare.rain.wet_days }} days over 1 mm{% else %}ERA5 estimate, not yet run{% endif %}</span></div>
+      <div class="card metric"><span class="tag">Sunlight</span>
+        <span class="n">{{ '%.1f'|format(compare.sun) if compare.sun else '&mdash;'|safe }}<span class="u"> kWh/m²</span></span>
+        <span class="l">Daily mean, NASA POWER</span></div>
+    </div>
+    <p class="risk-note reveal">The reanalysis runs about five days behind and currently reaches {{ compare.era5_until }}.
+      {% if compare.modelled_days %}On {{ compare.modelled_days }} day{{ '' if compare.modelled_days == 1 else 's' }} the station logged under 12 good hours, so the charts show the reanalysis alone.{% endif %}
+      Rain and sunlight are model and satellite estimates: the box has a wet-or-dry rain sensor, not a gauge.
+      {% if fieldlog.count %}Ground truth: {{ fieldlog.count }} field observation{{ '' if fieldlog.count == 1 else 's' }} logged{% if fieldlog.last %}, the latest on {{ fieldlog.last }}{% endif %}.
+      {% else %}Ground truth: no field observations logged yet, and calibrating the risk scores needs a season of them.{% endif %}
+      {% if is_admin %}<a href="/admin/field-log">Field log &rarr;</a>{% endif %}</p>
+    {% else %}
+    <div class="risk-empty reveal">
+      <p class="risk-empty-h">The comparison has not run yet.</p>
+      <p class="risk-empty-p">It is rebuilt once a day.</p>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
 <section class="section">
   <div class="container">
     <div class="connect reveal foot-cta-social">
@@ -960,6 +1191,68 @@ body.ag-in .only-in.member-actions{ display:flex; }
 </footer>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+  if (typeof Chart === 'undefined') return;
+  var SAT = {{ (sat.chart if sat.available else None)|tojson }};
+  var RAD = {{ (radar.chart if radar.available else None)|tojson }};
+  var CMP = {{ (compare.chart if compare.available else None)|tojson }};
+  var cs = getComputedStyle(document.documentElement), C = function(n){return cs.getPropertyValue(n).trim();};
+  var base = {responsive:true,maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{legend:{labels:{boxWidth:8,boxHeight:8,usePointStyle:true,pointStyle:'circle',
+      font:{size:11,weight:'500'},padding:16}}},
+    elements:{point:{radius:0,hitRadius:14},line:{tension:.35,borderWidth:2}},
+    scales:{x:{grid:{display:false},ticks:{maxTicksLimit:7}},
+            y:{border:{display:false},ticks:{maxTicksLimit:5}}}};
+  function withY(y){ return Object.assign({}, base, {scales:Object.assign({}, base.scales,
+    {y:Object.assign({}, base.scales.y, y)})}); }
+
+  // Both orbit charts share one time axis (milliseconds), so a date sits at
+  // the same place on each and the radar can be read against the gaps.
+  var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var day = function(v){ var d = new Date(v + 19800000);        // IST, +5:30
+    return d.getUTCDate() + ' ' + MON[d.getUTCMonth()]; };
+  function orbitOpts(range){
+    return Object.assign({}, base, {
+      interaction:{mode:'nearest', intersect:false},
+      plugins:Object.assign({}, base.plugins, {tooltip:{callbacks:{
+        title:function(items){ return items.length ? day(items[0].parsed.x) : ''; }}}}),
+      scales:{x:{type:'linear', min:range[0], max:range[1], grid:{display:false},
+                 ticks:{stepSize:14 * 86400000, autoSkip:true, maxRotation:0,
+                        callback:function(v){ return day(v); }}},
+              y:Object.assign({}, base.scales.y, {min:0, max:1})}});
+  }
+  var el = document.getElementById('c-ndvi');
+  if (el && SAT && SAT.points.length){
+    new Chart(el,{type:'line',data:{datasets:[
+      {label:'NDVI, clear passes',data:SAT.points,borderColor:C('--green'),backgroundColor:'rgba(63,94,57,.12)',
+       fill:true,pointRadius:3,pointBackgroundColor:C('--green'),cubicInterpolationMode:'monotone'}]},
+      options:orbitOpts(SAT.range)});
+  }
+  el = document.getElementById('c-rvi');
+  if (el && RAD){
+    new Chart(el,{type:'line',data:{datasets:[
+      {label:'Morning pass',data:RAD.morning,showLine:false,pointRadius:3,
+       borderColor:C('--moss'),backgroundColor:C('--moss')},
+      {label:'Evening pass',data:RAD.evening,showLine:false,pointRadius:3,
+       borderColor:C('--amber'),backgroundColor:C('--amber')},
+      {label:'Median of five',data:RAD.trend,borderColor:C('--green'),backgroundColor:C('--green'),
+       pointRadius:0,cubicInterpolationMode:'monotone'}]},
+      options:orbitOpts(RAD.range)});
+  }
+  el = document.getElementById('c-cmp-t');
+  if (el && CMP && CMP.labels.length){
+    new Chart(el,{type:'line',data:{labels:CMP.labels,datasets:[
+      {label:'Station',data:CMP.field_temp,borderColor:C('--green'),backgroundColor:C('--green'),spanGaps:false},
+      {label:'ERA5-Land',data:CMP.era5_temp,borderColor:C('--amber'),backgroundColor:C('--amber'),borderDash:[5,4]}]},options:base});
+    new Chart(document.getElementById('c-cmp-h'),{type:'line',data:{labels:CMP.labels,datasets:[
+      {label:'Station',data:CMP.field_rh,borderColor:C('--moss'),backgroundColor:C('--moss'),spanGaps:false},
+      {label:'ERA5-Land',data:CMP.era5_rh,borderColor:C('--amber'),backgroundColor:C('--amber'),borderDash:[5,4]}]},
+      options:withY({min:0,max:100})});
+  }
+})();
+</script>
 <script>
 (function(){
   var S = {{ series|tojson }};

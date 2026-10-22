@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the AgriSync outside feeds every hour
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=1h
+RandomizedDelaySec=120
+Persistent=true
+
+[Install]
+WantedBy=timers.target

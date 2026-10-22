@@ -177,8 +177,16 @@ def test_profile_is_needed_before_a_name_is_given(db):
 
 
 def test_profile_no_longer_needed_after_saving(db):
-    visitors.save_profile("a@example.com", name="Nikhil")
+    visitors.save_profile("a@example.com", name="Nikhil", phone="98765 43210")
     assert visitors.needs_profile("a@example.com") is False
+
+
+def test_phone_is_required_too(db):
+    ok, err = visitors.save_profile("a@example.com", name="Nikhil")
+    assert ok is False and "phone" in err
+    ok, err = visitors.save_profile("a@example.com", name="Nikhil", phone="12345")
+    assert ok is False and "phone" in err
+    assert visitors.needs_profile("a@example.com") is True
 
 
 def test_name_is_required(db):
@@ -191,32 +199,35 @@ def test_optional_fields_are_stored_when_given(db):
     visitors.save_profile("a@example.com", name="Nikhil", phone="+91 90000 00000",
                           organisation="AgriSync", purpose="research")
     doc = visitors.get("a@example.com")
-    assert doc["phone"] == "+91 90000 00000"
+    assert doc["phone"] == "9000000000"          # stored as the bare ten digits
     assert doc["organisation"] == "AgriSync"
 
 
 def test_blank_optionals_are_not_written_at_all(db):
     """A missing key is honest. An empty string implies we asked and got nothing."""
-    visitors.save_profile("a@example.com", name="Nikhil", phone="  ", organisation="")
+    visitors.save_profile("a@example.com", name="Nikhil", phone="9876543210",
+                          organisation="", purpose="  ")
     doc = visitors.get("a@example.com")
-    assert "phone" not in doc
     assert "organisation" not in doc
+    assert "purpose" not in doc
 
 
 def test_fields_are_length_capped(db):
-    visitors.save_profile("a@example.com", name="N" * 500, phone="9" * 500,
+    visitors.save_profile("a@example.com", name="N" * 500, phone="9876543210",
                           organisation="O" * 500, purpose="P" * 5000)
     doc = visitors.get("a@example.com")
     assert len(doc["name"]) == 80
-    assert len(doc["phone"]) == 32
+    assert doc["phone"] == "9876543210"
     assert len(doc["organisation"]) == 120
     assert len(doc["purpose"]) == 300
 
 
-def test_display_name_falls_back_to_the_email_local_part(db):
+def test_display_name_is_blank_until_a_name_is_saved(db):
+    """No guessing a name from the email address (changed in 787147f): the
+    page asks for the profile instead."""
     visitors.record("someone@example.com")
-    assert visitors.display_name("someone@example.com") == "someone"
-    visitors.save_profile("someone@example.com", name="Real Name")
+    assert visitors.display_name("someone@example.com") == ""
+    visitors.save_profile("someone@example.com", name="Real Name", phone="9876543210")
     assert visitors.display_name("someone@example.com") == "Real Name"
 
 

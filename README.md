@@ -11,20 +11,19 @@ Site: 28.7170, 77.7740 · Crop: cabbage (rabi) · Go-live: transplant, Aug 2026
 
 Read this before you trust any number this system produces.
 
-**Real:** air temperature, humidity, pressure (BME280), leaf surface temperature
-(MLX90614), rain wet/dry, canopy images.
+**Real:** air temperature, humidity, pressure (BME280), rain wet/dry, canopy images.
 
 **Derived, not measured:** `leaf_wetness`. There is no leaf wetness sensor in this
-build. The value is computed by comparing leaf temperature against the dew point.
-It is a proxy and it is the honest weak point of the project. A METER PHYTOS-31 on
-the ADS1115 A0 input is the drop-in upgrade.
+build, and the infrared leaf thermometer (MLX90614) never read reliably and was
+removed. Leaf temperature is estimated as air temperature minus 1 °C, and a reading
+counts as wet when that is at or below the dew point. It is a proxy and it is the
+honest weak point of the project. A METER PHYTOS-31 on the ADS1115 A0 input is the
+drop-in upgrade. `src/ml/leaf_temp.py` (the sky-temperature correction for the
+infrared sensor) stays in the repo for when a working one goes back in.
 
-**Corrected, with assumptions:** `leaf_temp_c`. The MLX90614 assumes the leaf is a
-perfect blackbody. It is not, and what it reflects is the sky, which on a clear
-night radiates far colder than the air. The server corrects for this using a
-modelled sky temperature. `leaf_temp_raw_c` is always stored alongside, so the
-correction can be improved and re-applied to the entire history without touching
-the hardware. See `src/ml/leaf_temp.py`.
+**Modelled, not measured:** everything from outside the box. Rain comes from the
+ERA5 reanalysis, sunlight from NASA POWER, the next three days from a weather
+forecast. The dashboard labels each one with its source.
 
 **Not calibrated:** every risk number. The API always returns `calibrated: false`.
 The disease models are a physics floor, not probabilities. Two of the four still use
@@ -52,6 +51,12 @@ scripts/check_devices.py     cron watchdog with alerting
 scripts/serial_bridge.py     USB serial -> API, for bench use
 deploy/                      systemd units, see deploy/README.md
 src/ml/physics_baseline.py   disease infection pressure models
+src/ml/forecast_risk.py      the same models run 12-72 h ahead on a forecast
+src/ml/anomaly.py            unusual-conditions check against the last 15 days
+src/ml/attribution.py        disease, or just stress? (canopy fall vs weather)
+src/feeds/sources.py         Open-Meteo, ERA5-Land, ERA5, NASA POWER, Sentinel-2, Sentinel-1
+scripts/update_feeds.py      refreshes every outside feed, run hourly by a timer
+src/api/fieldlog.py          /admin/field-log, what the plants actually did
 src/weather/forecast.py      Open-Meteo forecast fetch (no API key needed)
 firmware/synthetic_wifi/     Board A - ESP32 sensor node
 firmware/esp32cam_capture/   Board B - ESP32-CAM
@@ -105,8 +110,9 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-60 tests, no hardware and no database needed. They check the dew point math, the
-disease model shape, and every API route including auth rejection.
+About 200 tests, no hardware, no database and no internet needed. They check the
+dew point math, the disease model shape, every API route including auth rejection,
+and every outside feed with its source replaced by a fake.
 
 ## Bench mode: USB instead of WiFi
 
@@ -178,6 +184,33 @@ python -m src.ml.physics_baseline
 
 Prints the infection pressure table across temperature and wet hours.
 
+## Outside feeds
+
+Free data about the same field, fetched by the Pi every hour and shown on the
+dashboard. No accounts, no API keys.
+
+| Feed | Source | What it gives |
+|---|---|---|
+| Forecast | Open-Meteo, plus the 51-run ECMWF ensemble | infection pressure 12-72 h ahead, and how the weather runs split |
+| Cross-check | ERA5-Land reanalysis, ~5 days behind | station vs model: bias, correlation, and the days the station missed |
+| Rain | ERA5 | season rain; the box only has a wet/dry sensor |
+| Sunlight | NASA POWER | daily solar energy |
+| Greenness | Sentinel-2 L2A via Earth Search | NDVI over the field on clear passes |
+| Radar | Sentinel-1 GRD via Microsoft Planetary Computer | radar vegetation index on every pass, cloud or not |
+| Unusual conditions | the station itself | the last 6 hours against the same hours over 15 days |
+| Disease or stress | all of the above | points at disease only when the canopy falls while the weather favoured infection |
+
+Install once on the Pi, with the middle of the field in decimal degrees (it goes
+into `.env`, never into git):
+
+```bash
+bash deploy/install_feeds.sh LAT LON
+python -m scripts.update_feeds all        # everything now; "auto" is what the timer runs
+journalctl -u agrisync-feeds -n 40        # what the last run did
+```
+
+One feed failing (a slow server, no internet) is recorded and the others still run.
+
 ---
 
 ## API
@@ -228,9 +261,11 @@ credential is ever committed.
 
 ## Data routine
 
-The model is worthless without ground truth. Every field visit, add a row to
-`data/field_log.csv`: date, stage, healthy or first-lesion or spread. **Log the healthy
-days too.** A model fitted only on sick days cannot tell you when not to spray.
+The model is worthless without ground truth. Every field visit, add a row at
+`dashboard.agrisync.tech/admin/field-log` (admin only): date, stage, what you saw,
+severity 0-5, plants checked and plants affected. **Log the healthy days too.** A
+model fitted only on sick days cannot tell you when not to spray. The rows go to the
+`field_log` collection; `data/field_log.csv` is the older paper-style template.
 
 Collect the microSD images periodically and keep them dated. Note irrigation,
 spraying, and weather damage, because they explain the anomalies you will find later.
@@ -239,12 +274,13 @@ spraying, and weather damage, because they explain the anomalies you will find l
 
 ## Still to build
 
-- ESP32-CAM on-device image upload
-- Builder dashboard (risk plot)
-- Conformal calibration of the risk band
-- Anomaly detector that learns during the season
-- Sentinel-1/2 satellite ingestion
+- Firmware: re-send buffered readings over cellular (today only Wi-Fi flushes the buffer)
+- Conformal calibration of the risk band, once the field log holds a season of outcomes
+- A learned healthy-field model across sensor and satellite signals (today's
+  unusual-conditions check is a per-hour median and spread, not a trained model)
+- Direct leaf-wetness measurement
 - Real literature parameters for downy mildew and black rot
+- Alerts, after calibration
 
 
 ---
@@ -264,10 +300,13 @@ are running and you have tested a reboot.
 
 ## What the board does when the network drops
 
-Readings that fail to POST are written to the ESP32's flash and retried when the
-link returns, with their original timestamps preserved via NTP. A router outage
-during a wet night costs you nothing. Check the queue depth in any payload:
-`buffered_count`.
+Readings that fail to POST are written to the ESP32's flash. On Wi-Fi they are
+retried when the link returns. On cellular (firmware 1.4.0, the field box) they are
+kept but **not yet re-sent**: the flush only runs on Wi-Fi, and the box never sets
+its clock, so the server stamps each reading on arrival. Kept readings can be dumped
+over USB with the `D` serial command; never send `C`, which clears them. Check the
+queue depth in any payload: `buffered_count`. The flash holds roughly 5,700 lines
+before the oldest half is dropped.
 
 ## Reading the status LED from the ground
 

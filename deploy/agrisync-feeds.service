@@ -1,0 +1,22 @@
+# Outside feeds: forecast and its risk curve, the ERA5-Land comparison with
+# ERA5 rain and NASA POWER sunlight, Sentinel-2 NDVI, Sentinel-1 radar, the
+# unusual-conditions check and the disease-or-stress check.
+#
+# Installed by deploy/install_feeds.sh, which fixes User= and the paths.
+# Run by agrisync-feeds.timer; "auto" decides which feeds are due.
+[Unit]
+Description=AgriSync outside feeds
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/AgriSync
+EnvironmentFile=/home/pi/AgriSync/.env
+ExecStart=/home/pi/AgriSync/.venv/bin/python -m scripts.update_feeds auto
+# The first fill reads every satellite scene of the season; after that a run
+# takes seconds.
+TimeoutStartSec=1800
+Nice=10
+SyslogIdentifier=agrisync-feeds

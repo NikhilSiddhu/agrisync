@@ -126,12 +126,29 @@ def create_app():
                 "hours": hours,
                 "db_ok": True,
             }
+            # Outside feeds, refreshed by scripts/update_feeds.py. Each one
+            # degrades to {"available": False} on its own.
+            payload.update({
+                "forecast": data.forecast_risk(),
+                "compare": data.comparison(),
+                "sat": data.satellite(),
+                "radar": data.radar(),
+                "optical_gaps": data.optical_gaps(),
+                "check": data.disease_or_stress(),
+                "anom": data.anomalies(),
+                "fieldlog": data.field_log_summary(),
+            })
         except Exception as exc:
             app.logger.warning("dashboard degraded: %s", exc)
             payload = {
                 "site": data.site(), "latest": None, "stats": {}, "series": {},
                 "wet": {"available": False}, "risk": {"available": False},
                 "deeper": data.deeper_access(), "hours": hours, "db_ok": False,
+                "forecast": {"available": False}, "compare": {"available": False},
+                "sat": {"available": False}, "anom": {"available": False},
+                "radar": {"available": False}, "optical_gaps": None,
+                "check": {"available": False},
+                "fieldlog": {"count": 0, "last": None},
             }
 
         # ---- members only -------------------------------------------------
@@ -188,7 +205,6 @@ def create_app():
                 payload["is_admin"] = visitors.is_admin(email)
                 payload["can_see_photos"] = visitors.is_granted(email)
                 payload["has_requested"] = visitors.has_requested(email)
-                payload["thumbs"] = data.recent_photos(4)
                 payload["photo_total"] = data.photo_count()
             except Exception:
                 app.logger.warning("photo access check failed", exc_info=True)
