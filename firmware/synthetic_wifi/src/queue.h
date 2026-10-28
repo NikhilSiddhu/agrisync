@@ -17,6 +17,22 @@ int  sendBody(const String &body, bool quiet = false);   // HTTP status, or < 0 
 bool linkUp();                                           // is there a way home right now
 void queueIdle();                                        // called between sends
 
+/* Batches (1.6.0). With QUEUE_BATCH above 1 the queue drains up to that many
+   readings per request, as one JSON array, to /readings/batch; the sketch
+   then also provides
+       int sendBatch(const String &jsonArray);
+   qBatch can be lowered at run time (the Pi's config key b); 1 sends one at
+   a time, exactly as 1.5.0 did. Left at 1, none of this is compiled. */
+#ifndef QUEUE_BATCH
+#define QUEUE_BATCH 1
+#endif
+#if QUEUE_BATCH > 1
+int sendBatch(const String &body);
+int qBatch = QUEUE_BATCH;
+static const size_t BATCH_MAX_BYTES = 3600;      // under the 4 KB the modem carries cleanly in one write
+static const int    MAX_BATCHES_PER_LOOP = 8;    // ~100 readings, inside the same 90 s budget
+#endif
+
 // ---------- queue ----------
 static const char  *Q_DIR       = "/q";
 static const char  *Q_CURSOR    = "/q/cursor";
@@ -224,6 +240,80 @@ static bool permanentRefusal(int code) {
   return code == 400 || code == 413 || code == 422;
 }
 
+#if QUEUE_BATCH > 1
+/* Up to qBatch lines of the head segment per request, as one JSON array.
+   The cursor moves past a batch only once the server has answered 2xx, so a
+   batch lost on the way is sent again whole, and the server stores each
+   reading once. Returns false if the server refused a batch outright: the
+   caller then sends those lines one at a time, and the bad one is skipped
+   alone, never the eleven good ones with it. */
+static bool queueFlushBatches(unsigned long start, int &sent) {
+  int batches = 0;
+  while (qCount > 0 && batches < MAX_BATCHES_PER_LOOP && millis() - start < FLUSH_BUDGET_MS) {
+    String p = segPath(qHead);
+    File f;
+    if (LittleFS.exists(p)) f = LittleFS.open(p, "r");
+    if (!f) {                                 // segment missing: move on
+      if (qHead < qTail) { qHead++; qPos = 0; continue; }
+      qCount = 0;
+      break;
+    }
+    if (qPos > f.size()) qPos = f.size();
+    f.seek(qPos);
+    String body = "[";
+    int n = 0;
+    int32_t lines = 0;                        // newline-ended lines consumed (what qCount counts)
+    uint32_t endPos = qPos;
+    while (n < qBatch && f.available()) {
+      uint32_t at = f.position();
+      String line = f.readStringUntil('\n');
+      uint32_t next = f.position();
+      bool counted = next - at > line.length();
+      line.trim();
+      if (line.length() < 3 || line[0] != '{' || line[line.length() - 1] != '}') {   // blank or torn: dropped with this batch
+        endPos = next;
+        if (counted) lines++;
+        continue;
+      }
+      markQueued(line);
+      if (n > 0 && body.length() + line.length() + 2 > BATCH_MAX_BYTES) break;   // starts the next batch
+      if (n > 0) body += ",";
+      body += line;
+      n++;
+      endPos = next;
+      if (counted) lines++;
+    }
+    bool atEnd = endPos >= f.size();
+    f.close();
+    if (n > 0) {
+      body += "]";
+      int code = sendBatch(body);
+      if (code >= 200 && code < 300) {
+        sent += n;
+        batches++;
+      } else if (permanentRefusal(code)) {
+        Serial.printf("[queue] server refused a batch (HTTP %d): sending it one at a time\n", code);
+        return false;
+      } else {
+        return true;                          // the link failed: everything stays for next loop
+      }
+    }
+    qPos = endPos;
+    qCount -= lines;
+    if (qCount < 0) qCount = 0;
+    cursorSave();
+    if (atEnd) {                              // segment done: delete it
+      LittleFS.remove(p);
+      qPos = 0;
+      if (qHead < qTail) qHead++;
+      else qCount = 0;
+    }
+    queueIdle();                              // keep the camera answered
+  }
+  return true;
+}
+#endif
+
 /* Send what is queued, oldest first. Stops at the first failure of the link
    and keeps the rest; a line the server refuses outright is skipped, so one
    torn line can never block everything behind it. */
@@ -232,6 +322,14 @@ void queueFlush() {
   unsigned long start = millis();
   int sent = 0, skipped = 0;
   bool stop = false;
+#if QUEUE_BATCH > 1
+  if (qBatch > 1 && queueFlushBatches(start, sent)) {
+    if (qCount < 0) qCount = 0;
+    cursorSave();
+    if (sent) Serial.printf("[queue] sent %d in batches, %ld still waiting\n", sent, (long)qCount);
+    return;
+  }
+#endif
 
   while (!stop && qCount > 0 && sent + skipped < MAX_FLUSH_PER_LOOP && millis() - start < FLUSH_BUDGET_MS) {
     String p = segPath(qHead);

@@ -124,3 +124,49 @@ def require_hmac_only(fn):
         return fn(*args, **kwargs)
 
     return wrapper
+
+
+def verify_get_signature() -> tuple[bool, str]:
+    """A signed GET (firmware 1.6.0 downloading an update). A GET has no body,
+    so the path and query are signed in its place:
+
+        X-Sig: <unix_timestamp>.<hex hmac_sha256("<ts>." + path_with_query)>
+
+    Signing the path ties the signature to that one chunk: it cannot be
+    replayed to fetch anything else."""
+    secret = current_app.config.get("DEVICE_HMAC_SECRET", "")
+    if not secret or secret == PLACEHOLDER:
+        return False, "DEVICE_HMAC_SECRET not set in .env"
+    header = request.headers.get("X-Sig", "")
+    if "." not in header:
+        return False, "no X-Sig header"
+    timestamp, sig = header.split(".", 1)
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False, "timestamp not an integer"
+    skew = abs(int(time.time()) - ts)
+    if skew > MAX_SKEW_SECONDS:
+        return False, f"clock skew {skew}s exceeds {MAX_SKEW_SECONDS}s"
+    path = request.full_path if request.query_string else request.path
+    expected = _sign(secret, timestamp, path.encode())
+    if not hmac.compare_digest(sig, expected):
+        return False, "signature mismatch"
+    return True, "ok"
+
+
+def require_signed_get(fn):
+    """Signature over the path required. No API key fallback: what this guards
+    (firmware) only ever goes to the box."""
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        ok, reason = verify_get_signature()
+        if not ok:
+            current_app.logger.warning(
+                "rejected GET %s from %s: %s", request.path,
+                request.headers.get("CF-Connecting-IP", request.remote_addr), reason)
+            return jsonify({"error": "unauthorized"}), 401
+        return fn(*args, **kwargs)
+
+    return wrapper
+

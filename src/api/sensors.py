@@ -16,6 +16,7 @@ from src.auth import require_read_key
 from src.hmac_auth import require_device_auth
 
 from src.db import get_db
+from src import device_link
 from src.ml.leaf_temp import leaf_temp_from_reading
 from src.ml.wetness import (dew_point_c, estimated_leaf_temp_c, leaf_wetness_index,
                             measured_wetness_pct, sensor_calibration)
@@ -41,12 +42,17 @@ NUMERIC_FIELDS = (
     "battery_v",
     "rssi",
     "buffered_count",
+    "rain_wet_pct",       # 1.6.0: share of the interval the rain plate read wet
+    "ota_pct",            # 1.6.0: how far an update download has got
 )
 
 # Whole numbers from firmware 1.5.0 on. boot counts power-ups and up_s is
 # seconds since this one, so together they name a reading exactly and let a
 # reading taken before the clock was set be placed in time later.
-INTEGER_FIELDS = ("boot", "up_s", "legacy")
+INTEGER_FIELDS = ("boot", "up_s", "legacy",
+                  # 1.6.0 diagnostics: heap now and its low point, free flash,
+                  # the interval the box is running at, the config it applied
+                  "free_heap", "min_heap", "flash_free_kb", "interval_s", "cfg_v")
 
 # How far in the past a device-supplied timestamp may be and still be trusted.
 # The 1.5.0 queue holds about two weeks of five-minute readings, so this
@@ -76,9 +82,12 @@ def post_reading():
     # The board re-sends anything it did not see a reply for. Answer 200 so it
     # drops the copy from its queue, and store nothing.
     existing = find_duplicate(db, doc)
+    # From 1.6.0 the reply also carries the box's signed settings
+    # (src/device_link.py). Older firmware only reads the status code.
+    link = _link_fields(db, doc, note=existing is None)
     if existing is not None:
         return jsonify({"status": "duplicate", "id": str(existing["_id"]),
-                        "ts": doc["ts"].isoformat(), "ts_source": doc["ts_source"]}), 200
+                        "ts": doc["ts"].isoformat(), "ts_source": doc["ts_source"], **link}), 200
 
     flags = doc.get("quality_flags", [])
     if flags:
@@ -91,7 +100,65 @@ def post_reading():
         "ts": doc["ts"].isoformat(),
         "ts_source": doc["ts_source"],
         "quality_flags": flags,
+        **link,
     }), 201
+
+
+# A batch is what the 1.6.0 queue sends after an outage: up to twelve queued
+# readings in one request instead of twelve, which cuts the time the modem
+# spends on the air by about ten times. Each reading is handled exactly as if
+# it had come alone.
+MAX_BATCH_READINGS = 32
+
+
+@bp.post("/readings/batch")
+@require_device_auth
+def post_batch():
+    items = request.get_json(silent=True)
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "body must be a JSON array of readings"}), 400
+    if len(items) > MAX_BATCH_READINGS:
+        return jsonify({"error": f"at most {MAX_BATCH_READINGS} readings a batch"}), 413
+
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    counts = {"stored": 0, "duplicate": 0, "refused": 0}
+    newest = None
+    for payload in items:
+        if not isinstance(payload, dict):
+            counts["refused"] += 1
+            continue
+        doc, error = build_reading(payload, now, db=db)
+        if error:
+            # One bad line must not hold back the rest: refuse it alone, as
+            # the single endpoint would, and the box moves past it.
+            counts["refused"] += 1
+            current_app.logger.warning("batch: refused one reading: %s", error)
+            continue
+        if find_duplicate(db, doc) is not None:
+            counts["duplicate"] += 1
+        else:
+            if doc.get("ota_state"):
+                device_link.note_ota_state(db, doc["device_id"], doc["ota_state"])
+            db.readings.insert_one(doc)
+            counts["stored"] += 1
+        if newest is None or doc["ts"] >= newest["ts"]:
+            newest = doc
+    link = _link_fields(db, newest, note=False) if newest else {}
+    return jsonify({"status": "ok", **counts, **link}), 200
+
+
+def _link_fields(db, doc, note=True):
+    """Signed settings for a 1.6.0 box, and (for a reading stored for the
+    first time) a note of what it said about an update. {} for older firmware
+    or when anything is missing."""
+    try:
+        if note and doc.get("ota_state"):
+            device_link.note_ota_state(db, doc["device_id"], doc["ota_state"])
+        return device_link.reply_fields(current_app.config.get("DEVICE_HMAC_SECRET", ""), doc, db=db)
+    except Exception:                       # settings are a courtesy: never fail a reading over them
+        current_app.logger.exception("device link: could not build the reply")
+        return {}
 
 
 def build_reading(payload, now, db=None, max_backfill_days=MAX_BACKFILL_DAYS,
@@ -160,6 +227,8 @@ def build_reading(payload, now, db=None, max_backfill_days=MAX_BACKFILL_DAYS,
         doc["firmware"] = str(payload["firmware"])[:32]
     if payload.get("reset"):
         doc["reset_reason"] = str(payload["reset"])[:24]
+    if payload.get("ota_state"):
+        doc["ota_state"] = str(payload["ota_state"])[:48]
 
     _derive(doc)
 

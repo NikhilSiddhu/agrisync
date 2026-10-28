@@ -1,8 +1,39 @@
 /*
- * AgriSync Board A - ESP32 WROOM-32D sensor node   (firmware 1.5.0)
+ * AgriSync Board A - ESP32 WROOM-32D sensor node   (firmware 1.6.0)
  *
  * Reads the I2C bus, derives leaf wetness from dew point, POSTs JSON home.
  *
+ * What 1.6.0 adds, so the box never needs a cable again after this flash:
+ *
+ *  THE PI SETS THE PACE           Each reply to a reading can carry a signed
+ *                       config from the Pi (linkcore.h): the interval, the
+ *                       queue batch size, an update on offer. Applied only if
+ *                       its HMAC checks, it is fresh and newer than the last.
+ *                       Kept in flash, so it survives a power cut. The box
+ *                       still slows itself on a low battery, whatever it says.
+ *
+ *  UPDATES OVER 4G                The image comes down 3 KB at a time between
+ *                       readings, is hashed byte for byte against the SHA-256
+ *                       the Pi signed, and boots on trial: no reading through
+ *                       within three boots and the old image comes back.
+ *
+ *  THE KEY LIVES IN FLASH         A build with DEVICE_HMAC_SECRET set writes
+ *                       the key to NVS; images sent over the air are built
+ *                       with it empty, because the download is readable by
+ *                       anyone on the network path.
+ *
+ *  THE QUEUE DRAINS IN BATCHES    Up to twelve readings a request after an
+ *                       outage instead of one (queue.h).
+ *
+ *  THE RAIN INPUT IS DEBOUNCED    1.4.0 counted every flicker of the plate's
+ *                       comparator: 53 million "tips". Edges closer than
+ *                       200 ms now count once, and rain_wet_pct says how much
+ *                       of the interval the plate read wet.
+ *
+ *  DIAGNOSTICS                    free_heap, min_heap, flash_free_kb,
+ *                       interval_s, cfg_v, ota_state in every reading.
+ *
+ * 1.5.0:
  * What 1.5.0 changed, and why. The field data from August to October 2026
  * showed the queue of unsent readings only ever growing, 3,340 of them by
  * 22 October, including the whole week of 3 to 10 October:
@@ -52,7 +83,7 @@
  * Serial commands (115200):
  *      D   print every queued and legacy reading. Deletes nothing.
  *      C   ask to clear the queue; then Y within 10 s to do it
- *      ?   status
+ *      ?   status (with the interval, batch, config and update state)
  *      T   cellular upload size sweep
  *
  * Pin map:
@@ -112,7 +143,13 @@
 #include <Adafruit_MLX90614.h>
 #include <Adafruit_ADS1X15.h>
 
+#ifndef HMAC_SECRET
+#define HMAC_SECRET ""
+#endif
+
 #if USE_CELL
+#include <Update.h>
+#include <esp_ota_ops.h>
 #include "modem.h"
 #include "photoreceiver.h"
 static const int PIN_MODEM_RX = 27;   // ESP32 RX2  <- modem TXD
@@ -134,10 +171,11 @@ static const int PIN_STATUS_LED = 2;
    accounting (12 samples an hour), and it quadruples both battery life and
    flash capacity. */
 #if USE_CELL
-static const unsigned long POST_INTERVAL_MS = 300UL * 1000UL;
+static long cfgIntervalS = 300;      // the Pi's wish from 1.6.0, kept in NVS
 #else
-static const unsigned long POST_INTERVAL_MS = 60UL * 1000UL;
+static long cfgIntervalS = 60;
 #endif
+static float lastBattV = 0.0f;       // 0: not measured on this build
 static const unsigned long WIFI_TIMEOUT_MS  = 20UL * 1000UL;
 static const int  POST_RETRIES        = 3;
 static const int  POST_RETRY_DELAY_MS = 2500;
@@ -174,23 +212,240 @@ bool haveADS = false;
 bool clockSynced = false;
 
 volatile unsigned long rainTips = 0;
+volatile uint32_t rainLastEdgeUs = 0;
+static const uint32_t RAIN_DEBOUNCE_US = 200000;   // edges closer than 200 ms are one event
+static uint16_t rainWetN = 0, rainSampN = 0;        // plate samples this interval, and how many read wet
+static unsigned long rainLastSample = 0;
 unsigned long lastPost = 0;
 Fault currentFault = FAULT_NONE;
 
 uint32_t bootCount = 0;
 bool firstReading = true;
 
+#if NETWORKED
+#define QUEUE_BATCH 12                 // 1.6.0: up to twelve queued readings a request
+#endif
 #include "queue.h"
+
+#if USE_CELL
+#include "linkcore.h"
+#include "ota.h"
+#endif
 
 /* Between queued sends: keep the camera link answered, so a photograph
    arriving mid-drain is not left waiting for a minute. */
+const char *deviceSecret();      // the key from NVS (below)
+
 void queueIdle() {
 #if USE_CELL
-  photoReceiverService(modem, CELL_HOST, HMAC_SECRET, cellReady);
+  photoReceiverService(modem, CELL_HOST, deviceSecret(), cellReady);
 #endif
 }
 
-void IRAM_ATTR onRainTip() { rainTips = rainTips + 1; }
+/* The plate's comparator chatters when the plate is half wet: 1.4.0 counted
+   every flicker. Now a burst of edges is one event, once 200 ms pass quiet. */
+void IRAM_ATTR onRainTip() {
+  uint32_t now = (uint32_t)micros();
+  if (now - rainLastEdgeUs > RAIN_DEBOUNCE_US) rainTips = rainTips + 1;
+  rainLastEdgeUs = now;
+}
+
+/* Every 10 s, between readings: is the plate wet? DO is pulled low when it is. */
+static void sampleRainPlate() {
+  if (rainLastSample != 0 && millis() - rainLastSample < 10000UL) return;
+  rainLastSample = millis();
+  if (rainSampN < 60000) {
+    rainSampN++;
+    if (digitalRead(PIN_RAIN_DO) == LOW) rainWetN++;
+  }
+}
+
+static unsigned long currentIntervalMs() {
+#if USE_CELL
+  return (unsigned long)effectiveInterval(cfgIntervalS, lastBattV) * 1000UL;
+#else
+  return (unsigned long)cfgIntervalS * 1000UL;
+#endif
+}
+
+// ============================ the device key ============================
+/* From 1.6.0 the key lives in NVS. A build made with DEVICE_HMAC_SECRET set
+   (the cable flash) writes it there, replacing any older one, which is also
+   how the key is rotated. A build made with it empty (every image sent over
+   the air) uses what is stored. */
+static String g_secret;
+static void secretBegin() {
+  Preferences p;
+  if (!p.begin("agrisync", false)) return;
+  String stored = p.getString("hmac", "");
+  const char *built = HMAC_SECRET;
+  if (strlen(built) >= 8 && stored != built) {
+    p.putString("hmac", built);
+    stored = built;
+    Serial.println("[key] device key from this build stored in flash");
+  }
+  p.end();
+  g_secret = stored;
+  if (!g_secret.length()) Serial.println("[key] NO DEVICE KEY: flash once by cable with DEVICE_HMAC_SECRET set");
+}
+const char *deviceSecret() { return g_secret.c_str(); }
+
+// ============================ the link to the Pi (1.6.0) ============================
+#if USE_CELL
+static long   lastCfgTs = 0;          // newest config applied, so an old one is never replayed
+static int    cfgV = 0;
+static BoxCfg pendingOffer;
+static bool   offerPending = false;
+static String otaBad;                 // a version that failed here: not tried again
+static String otaNote;                // for the next reading: ok:<v>, rolled_back:<v>, fail:<why>:<v>
+static bool   otaTrialPending = false;
+static const uint32_t OTA_TRIAL_BOOTS = 3;
+
+static void linkLoad() {
+  Preferences p;
+  if (!p.begin("agrisync", true)) return;
+  long ivl = (long)p.getULong("ivl", 0);
+  if (ivl >= IVL_MIN_S && ivl <= IVL_MAX_S) cfgIntervalS = ivl;
+  uint8_t b = p.getUChar("batch", 0);
+  if (b >= 1 && b <= BATCH_MAX) qBatch = b;
+  lastCfgTs = (long)p.getULong("cfg_ts", 0);
+  p.end();
+}
+
+static void noteSave(const String &note) {
+  otaNote = note;
+  Preferences p;
+  if (!p.begin("agrisync", false)) return;
+  if (note.length()) p.putString("ota_note", note); else p.remove("ota_note");
+  p.end();
+}
+
+/* The Pi's signed settings, from the reply to a reading or a batch. */
+static void applyReply(const String &reply) {
+  String cfg, sig;
+  long ts = 0;
+  if (!reply.length() || !replyConfig(reply, cfg, ts, sig)) return;
+  String expect = Modem::sign(deviceSecret(), String(ts) + "." + cfg);
+  CfgVerdict v = cfgCheck(cfg, ts, sig, expect, clockSynced ? (long)time(nullptr) : 0, lastCfgTs);
+  if (v != CFG_OK) {
+    if (v != CFG_REPLAY) Serial.printf("[cfg] not applied (%s)\n",
+                                       v == CFG_BADSIG ? "bad signature" : v == CFG_STALE ? "stale" : "none");
+    return;
+  }
+  BoxCfg c;
+  if (!cfgParse(cfg, c)) return;
+  lastCfgTs = ts;
+  cfgV = c.v;
+  Preferences p;
+  if (p.begin("agrisync", false)) {
+    p.putULong("cfg_ts", (uint32_t)ts);
+    if (c.interval_s && c.interval_s != cfgIntervalS) {
+      cfgIntervalS = c.interval_s;
+      p.putULong("ivl", (uint32_t)c.interval_s);
+      Serial.printf("[cfg] interval now %ld s\n", c.interval_s);
+    }
+    if (c.batch && c.batch != qBatch) {
+      qBatch = c.batch;
+      p.putUChar("batch", (uint8_t)c.batch);
+      Serial.printf("[cfg] queue batch now %d\n", c.batch);
+    }
+    p.end();
+  }
+  if (c.ota.length()) { pendingOffer = c; offerPending = true; }
+}
+
+/* A reading got through. On a trial boot that settles it: this image stays. */
+static void linkOk() {
+  if (!otaTrialPending) return;
+  otaTrialPending = false;
+  Preferences p;
+  if (p.begin("agrisync", false)) { p.remove("ota_trial"); p.remove("ota_tries"); p.end(); }
+  esp_ota_mark_app_valid_cancel_rollback();
+  noteSave(String("ok:") + FIRMWARE_VERSION);
+  Serial.println("[ota] trial passed: this image stays");
+}
+
+/* First thing at boot. A new image is on trial until a reading gets through;
+   three boots without one, and the box goes back to the image before it. */
+static void otaBootCheck() {
+  Preferences p;
+  if (!p.begin("agrisync", false)) return;
+  otaBad = p.getString("ota_bad", "");
+  otaNote = p.getString("ota_note", "");
+  String trial = p.getString("ota_trial", "");
+  if (trial.length()) {
+    if (trial == FIRMWARE_VERSION) {
+      uint32_t tries = p.getUInt("ota_tries", 0) + 1;
+      p.putUInt("ota_tries", tries);
+      if (tries > OTA_TRIAL_BOOTS) {
+        String note = String("rolled_back:") + trial;
+        p.putString("ota_bad", trial);
+        p.putString("ota_note", note);
+        p.remove("ota_trial");
+        p.remove("ota_tries");
+        p.end();
+        const esp_partition_t *back = esp_ota_get_next_update_partition(NULL);
+        Serial.printf("[ota] %s got no reading through in %u boots: going back\n", trial.c_str(), (unsigned)OTA_TRIAL_BOOTS);
+        if (back && esp_ota_set_boot_partition(back) == ESP_OK) { delay(300); ESP.restart(); }
+        return;
+      }
+      otaTrialPending = true;
+      Serial.printf("[ota] %s on trial, boot %u of %u\n", trial.c_str(), (unsigned)tries, (unsigned)OTA_TRIAL_BOOTS);
+    } else {
+      // Something other than the trial image is running: it was rolled back.
+      String note = String("rolled_back:") + trial;
+      p.putString("ota_bad", trial);
+      p.putString("ota_note", note);
+      p.remove("ota_trial");
+      p.remove("ota_tries");
+      otaBad = trial;
+      otaNote = note;
+    }
+  }
+  p.end();
+}
+
+// ota.h's hooks: the signed GET and the Update library.
+int otaFetch(const String &path, String &out) {
+  if (!cellReady) return -1;
+  return modem.getSigned(CELL_HOST, path, deviceSecret(), out, 4200);
+}
+bool otaInstallBegin(size_t size) { return Update.begin(size); }
+bool otaInstallWrite(const uint8_t *p, size_t n) { return Update.write((uint8_t *)p, n) == n; }
+bool otaInstallEnd() { return Update.end(); }
+void otaInstallAbort() { Update.abort(); }
+
+/* Between readings: start an offered update, or fetch the next slice of one. */
+static void otaService() {
+  if (offerPending && !otaJob.active) {
+    offerPending = false;
+    bool battOk = lastBattV < 1.0f || lastBattV >= 12.0f;
+    if (clockSynced && battOk && qCount < 100) otaStart(pendingOffer, FIRMWARE_VERSION, otaBad);
+  }
+  if (!otaJob.active || !cellReady) return;
+  int r = otaStep();
+  if (r == 1) {
+    Preferences p;
+    if (p.begin("agrisync", false)) {
+      p.putString("ota_trial", otaJob.ver);
+      p.putUInt("ota_tries", 0);
+      p.end();
+    }
+    cursorSave();
+    delay(500);
+    ESP.restart();
+  } else if (r == -1) {
+    noteSave(otaReport);
+    // A bad image or a refusal to install will not get better by trying
+    // again; a failed download might, on the next offer.
+    if (otaReport.indexOf("fail:fetch") != 0 && otaReport.indexOf("fail:chunk") != 0) {
+      otaBad = otaJob.ver;
+      Preferences p;
+      if (p.begin("agrisync", false)) { p.putString("ota_bad", otaBad); p.end(); }
+    }
+  }
+}
+#endif
 
 // ============================ helpers ============================
 
@@ -491,17 +746,30 @@ float readLeafWetMv() {
 int sendBody(const String &body, bool quiet) {
   if (!cellReady) return -1;
 
+  String reply;
   int code = modem.postJson(CELL_HOST, "/api/v1/sensors/readings", body,
-                            HMAC_SECRET);
+                            deviceSecret(), &reply);
 
   if (!quiet) Serial.printf("[reading] HTTP %d\n", code);
+  if (code >= 200 && code < 300) { linkOk(); applyReply(reply); }
 
   if (code == 401) {
-    Serial.println("  -> signature rejected. Either HMAC_SECRET does not match");
+    Serial.println("  -> signature rejected. Either the device key does not match");
     Serial.println("     .env on the Pi, or the clock is more than 15 min out.");
   } else if (code == -2) {
     Serial.println("  -> no clock. NTP sync failed, cannot sign.");
   }
+  return code;
+}
+
+/* Up to twelve queued readings in one request (queue.h). */
+int sendBatch(const String &body) {
+  if (!cellReady) return -1;
+  String reply;
+  int code = modem.postJson(CELL_HOST, "/api/v1/sensors/readings/batch", body,
+                            deviceSecret(), &reply);
+  Serial.printf("[batch] %u bytes, HTTP %d\n", (unsigned)body.length(), code);
+  if (code >= 200 && code < 300) { linkOk(); applyReply(reply); }
   return code;
 }
 
@@ -527,6 +795,20 @@ int sendBody(const String &body, bool quiet) {
     Serial.println("  -> is the API running?  systemctl status agrisync-api");
   }
 
+  http.end();
+  return code;
+}
+
+int sendBatch(const String &body) {
+  if (WiFi.status() != WL_CONNECTED) return -1;
+  HTTPClient http;
+  String url = String("http://") + PI_HOST + ":5000/api/v1/sensors/readings/batch";
+  http.begin(url);
+  http.setTimeout(15000);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", DEVICE_API_KEY);
+  int code = http.POST(body);
+  Serial.printf("[batch] HTTP %d\n", code);
   http.end();
   return code;
 }
@@ -564,7 +846,7 @@ static void sigSweep() {
     for (size_t k = 0; k < n; k++) buf[k] = (uint8_t)(k & 0xFF);
 
     int code = modem.postBinary(CELL_HOST, "/api/v1/photos?name=sweep.jpg",
-                                buf, n, HMAC_SECRET);
+                                buf, n, deviceSecret());
     free(buf);
 
     Serial.printf("[sweep] %6u bytes -> HTTP %d  %s\n",
@@ -598,6 +880,13 @@ void serviceSerialCommands() {
                   FIRMWARE_VERSION, (unsigned long)bootCount, (unsigned long)upSeconds(),
                   clockSynced ? "set" : "NOT SET", (long)qCount, (long)legacyCount,
                   (unsigned)(freeBytes() / 1024));
+    Serial.printf("[status] interval %lus  key %s  heap %u (low %u)\n", currentIntervalMs() / 1000UL,
+                  g_secret.length() ? "stored" : "MISSING", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap());
+#if USE_CELL
+    Serial.printf("[status] batch %d  config v%d  update %s%s%s\n", qBatch, cfgV,
+                  otaJob.active ? "downloading " : (otaTrialPending ? "on trial" : "none"),
+                  otaJob.active ? otaJob.ver.c_str() : "", otaNote.length() ? (String("  last: ") + otaNote).c_str() : "");
+#endif
   }
 }
 
@@ -610,8 +899,12 @@ void setup() {
   Serial.printf("device: %s -> pi: %s\n", DEVICE_ID, PI_HOST);
   Serial.println("commands: D dump, C then Y clear, ? status");
 
+#if USE_CELL
+  otaBootCheck();             // first: a new image on trial may need to step back
+#endif
   countBoot();
   Serial.printf("[boot] %lu, reset: %s\n", (unsigned long)bootCount, resetReason());
+  secretBegin();
 
   pinMode(PIN_STATUS_LED, OUTPUT);
   pinMode(PIN_RAIN_DO, INPUT_PULLUP);
@@ -622,6 +915,9 @@ void setup() {
   } else {
     queueBegin();
   }
+#if USE_CELL
+  linkLoad();                 // the Pi's last interval and batch size
+#endif
 
   setupSensors();
 
@@ -668,12 +964,13 @@ void setup() {
 
 void loop() {
 #if USE_CELL
-  photoReceiverService(modem, CELL_HOST, HMAC_SECRET, cellReady);
+  photoReceiverService(modem, CELL_HOST, deviceSecret(), cellReady);
 #endif
   serviceStatusLed();
+  sampleRainPlate();
   serviceSerialCommands();   // D dump, C then Y clear, ? status
 
-  if (lastPost != 0 && millis() - lastPost < POST_INTERVAL_MS) {
+  if (lastPost != 0 && millis() - lastPost < currentIntervalMs()) {
     delay(20);
     return;
   }
@@ -743,10 +1040,30 @@ void loop() {
 
   doc["rain_analog"] = analogRead(PIN_RAIN_AO);
   doc["rain_tips"]   = rainTips;
+  if (rainSampN) {
+    doc["rain_wet_pct"] = 100.0f * rainWetN / rainSampN;
+    rainWetN = rainSampN = 0;
+  }
 
 #ifdef USE_BATTERY_ADC
   int raw = analogRead(PIN_BATTERY);
-  doc["battery_v"] = (raw / 4095.0f) * 3.3f * ((47.0f + 10.0f) / 10.0f);
+  lastBattV = (raw / 4095.0f) * 3.3f * ((47.0f + 10.0f) / 10.0f);
+  doc["battery_v"] = lastBattV;
+#endif
+
+  // 1.6.0 diagnostics: what the box is running at, and how its memory holds up.
+  doc["free_heap"]  = ESP.getFreeHeap();
+  doc["min_heap"]   = ESP.getMinFreeHeap();
+  doc["interval_s"] = currentIntervalMs() / 1000UL;
+#if NETWORKED
+  doc["flash_free_kb"] = (unsigned)(freeBytes() / 1024);
+#endif
+#if USE_CELL
+  if (cfgV) doc["cfg_v"] = cfgV;
+  String sentNote = otaNote;            // said once, in a reading that got through, is enough
+  if (sentNote.length()) doc["ota_state"] = sentNote;
+  int otaPct = otaPercent();
+  if (otaPct >= 0) doc["ota_pct"] = otaPct;
 #endif
 
 #if USE_WIFI_POST
@@ -784,6 +1101,9 @@ void loop() {
   }
 
   if (ok) {
+#if USE_CELL
+    if (sentNote.length() && otaNote == sentNote) noteSave(String());
+#endif
     queueFlush();   // link is up, drain anything queued
     updateFault();
   } else if (permanentRefusal(code)) {
@@ -793,4 +1113,8 @@ void loop() {
     queuePush(body);
     currentFault = FAULT_API;
   }
+
+#if USE_CELL
+  otaService();     // an update on offer comes down between readings
+#endif
 }

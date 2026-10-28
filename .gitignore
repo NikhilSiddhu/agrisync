@@ -53,3 +53,6 @@ mongo-data/
 backups/
 *.bak
 *.bak[0-9]
+
+# firmware images offered to the box (scripts/publish_firmware.py)
+data/firmware/

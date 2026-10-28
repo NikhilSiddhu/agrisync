@@ -21,6 +21,7 @@ from src.api.admin_api import bp as admin_api_bp
 from src.api.auth import bp as auth_bp
 from src.api.devices import bp as devices_bp
 from src.api.fieldlog import bp as fieldlog_bp
+from src.api.firmware import bp as firmware_bp
 from src.api.health import bp as health_bp
 from src.api.photos import bp as photos_bp
 from src.api.risk import bp as risk_bp
@@ -49,6 +50,7 @@ def create_app(config_object=Config):
     app.register_blueprint(views_bp)
     app.register_blueprint(fieldlog_bp)
     app.register_blueprint(sensors_bp)
+    app.register_blueprint(firmware_bp)
     app.register_blueprint(risk_bp)
 
     @app.after_request

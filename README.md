@@ -69,11 +69,15 @@ src/feeds/sources.py         Open-Meteo, ERA5-Land, ERA5, NASA POWER, Sentinel-2
 scripts/update_feeds.py      refreshes every outside feed and the odds, run hourly by a timer
 scripts/dump_buffer.py       copies the readings stuck in Phytoplex's flash to a file
 scripts/recover_buffer.py    puts those readings back at their right times
+scripts/publish_firmware.py  offers a firmware image to the box over 4G (1.6.0)
+src/device_link.py           the signed settings the Pi sends back to the box (1.6.0)
+deploy/update.sh             updates the Pi from GitHub, checks it, goes back if not
 src/api/fieldlog.py          /admin/field-log, what the plants actually did
 src/weather/forecast.py      Open-Meteo forecast fetch (no API key needed)
-firmware/synthetic_wifi/     Board A - ESP32 sensor node (firmware 1.5.0)
+firmware/synthetic_wifi/     Board A - ESP32 sensor node (firmware 1.6.0)
 firmware/esp32cam_capture/   Board B - ESP32-CAM
 docs/FIRMWARE_1.5.0.md       what firmware 1.5.0 does: queue, payload, serial commands
+docs/FIRMWARE_1.6.0.md       what 1.6.0 adds: settings from the Pi, batches, updates over 4G
 scripts/backup_mongo.sh      nightly mongodump
 tests/                       runs without any hardware
 data/field_log.csv           your field observations - the most valuable file here
@@ -389,6 +393,11 @@ ranks" line shows up a little after the rest.
 | `ALERT_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Where odds alerts go. Any one channel is enough. |
 | `ALERT_ESTIMATED` | `0` | `1` lets the old per-disease alert rule include downy mildew and black rot. |
 | `DEVICE_HMAC_SECRET` | empty | Signing key shared with Phytoplex. Rotated at season end. |
+| `BOX_INTERVAL_S` | `300` | Seconds between readings the Pi asks of a 1.6.0 box. |
+| `BOX_WET_INTERVAL_S` | `150` | The same on a wet night (6 pm to 10 am, humidity 90%+ or leaf wet). Equal to the above switches it off. |
+| `BOX_BATCH` | `12` | Queued readings per request, 1 to 12. |
+| `OTA_ENABLED` | `0` | `1` offers the image published with `scripts/publish_firmware.py` to the box. |
+| `FIRMWARE_DIR` | `data/firmware` | Where published images and their manifest live. Never in git. |
 
 `ALERT_STALE_MINUTES` (the watchdog) is unchanged. The `LW_*` keys are only needed
 once a leaf wetness sensor is fitted. `install_feeds.sh` also writes `FIELD_LAT`,
@@ -408,7 +417,10 @@ requirements.txt` (`install_feeds.sh` does it for you).
 |---|---|---|---|
 | GET | `/health` | none | is Flask alive |
 | GET | `/health/db` | none | can Flask reach Mongo |
-| POST | `/api/v1/sensors/readings` | `X-API-Key` | the ESP32 posts here |
+| POST | `/api/v1/sensors/readings` | `X-Sig` or `X-API-Key` | the ESP32 posts here; 1.6.0 gets its signed settings in the reply |
+| POST | `/api/v1/sensors/readings/batch` | `X-Sig` or `X-API-Key` | up to 32 queued readings as one JSON array (firmware 1.6.0) |
+| GET | `/api/v1/firmware/chunk?v=&off=&len=` | `X-Sig` over the path | a piece of a published image, base64 (firmware 1.6.0) |
+| GET | `/api/v1/firmware/manifest` | `X-Sig` over the path | what is on offer |
 | GET | `/api/v1/sensors/readings` | `X-Read-Key`* | recent rows, `?device_id=` `?limit=` |
 | GET | `/api/v1/risk/<device_id>` | `X-Read-Key`* | infection pressure curve |
 | GET | `/api/v1/devices` | `X-Read-Key`* | health of every device |
@@ -446,10 +458,13 @@ cd firmware/synthetic_wifi && pio run -t upload && pio device monitor
 Secrets are passed in as environment variables and injected as build flags, so no
 credential is ever committed.
 
-The Phytoplex field build is firmware 1.5.0 over cellular (`-DTRANSPORT=2`). It also
-needs `CELL_APN`, `DEVICE_HMAC_SECRET`, `CF_ACCESS_ID` and `CF_ACCESS_SECRET` in the
-environment. What 1.5.0 changes (the queue, the new payload fields, the serial
-commands) is in [docs/FIRMWARE_1.5.0.md](docs/FIRMWARE_1.5.0.md).
+The Phytoplex field build is firmware 1.6.0 over cellular (`-DTRANSPORT=2`). It also
+needs `CELL_APN` and `DEVICE_HMAC_SECRET` in the environment. What 1.5.0 changed (the
+queue, the clock, the serial commands) is in
+[docs/FIRMWARE_1.5.0.md](docs/FIRMWARE_1.5.0.md). What 1.6.0 adds (settings from the
+Pi, batches, updates over 4G, the key kept in flash, the rain fix) is in
+[docs/FIRMWARE_1.6.0.md](docs/FIRMWARE_1.6.0.md). 1.6.0 is tested on a computer and
+waits for a bench test before the pole.
 
 **If Phytoplex has readings stuck in its flash, do not flash it yet.** Follow
 [Season end](#season-end-dump-recover-flash-clear) first.
@@ -476,11 +491,12 @@ spraying, and weather damage, because they explain the anomalies you will find l
 - Direct leaf-wetness measurement: the firmware and server are ready, the sensor is
   not fitted yet
 - Real literature parameters for downy mildew and black rot
-- Fix Phytoplex's faults found on 22 Oct: the leaf thermometer is missing,
-  `rain_tips` reads 53.6 million (the input is chattering), the rain plate has read
-  wet since 27 Sep, and the BME280 saturates at 100% humidity
-- Re-send of readings stuck in Phytoplex, in the field. Firmware 1.5.0 fixes this,
-  but it has to be flashed first (see Season end)
+- Fix Phytoplex's faults found on 22 Oct: the leaf thermometer is missing, the rain
+  plate has read wet since 27 Sep, and the BME280 saturates at 100% humidity. The
+  health check now names the plate and the counter; 1.6.0 debounces the counter
+- Re-send of readings stuck in Phytoplex, in the field. Firmware 1.5.0 fixes this and
+  1.6.0 batches it, but one of them has to be flashed first (see Season end)
+- A bench test of 1.6.0 (docs/FIRMWARE_1.6.0.md, "Bench checklist") before the pole
 
 
 ---
@@ -575,8 +591,10 @@ Do these steps **in this order**, on the Pi, with Phytoplex plugged into it.
    It is safe to run twice: each stored reading records which dump and slot it came
    from, so nothing is stored twice. Check the dashboard: the gaps should be filled.
 
-5. **Only then, flash 1.5.0.** Build it on your own machine with the real environment
-   variables (see [Firmware](#firmware)), including a **new** `DEVICE_HMAC_SECRET`:
+5. **Only then, flash 1.6.0** (or 1.5.0 if 1.6.0 has not passed its bench test).
+   This should be the last cable flash: from 1.6.0 on, updates go over 4G. Build it
+   on your own machine with the real environment variables (see [Firmware](#firmware)),
+   including a **new** `DEVICE_HMAC_SECRET`, which 1.6.0 writes into its own flash:
    ```bash
    openssl rand -hex 32          # make a new one; keep it out of git and out of chat
    cd firmware/synthetic_wifi && pio run -t upload
@@ -584,8 +602,8 @@ Do these steps **in this order**, on the Pi, with Phytoplex plugged into it.
    - **Don't flash a build made without your real values** (for example one built in
      a sandbox). It is a compile check only.
    - Use plain `upload`. Don't erase the flash or upload a filesystem image.
-   - On its first start, 1.5.0 moves the old buffer to `/legacy.jsonl`. It is kept,
-     never sent, and `D` still prints it as `[legacy]` lines.
+   - On its first start, 1.5.0 and later move the old buffer to `/legacy.jsonl`. It
+     is kept, never sent, and `D` still prints it as `[legacy]` lines.
 
 6. **Rotate the HMAC secret on the server.** The old one is in public git history, so
    treat it as burned. Put the same new value in `DEVICE_HMAC_SECRET` in the Pi's
@@ -598,24 +616,28 @@ Do these steps **in this order**, on the Pi, with Phytoplex plugged into it.
    uses the same secret and needs rebuilding with the new value too.
 
 7. **Check, then clear.** Send `?` over serial (`pio device monitor`). It should show
-   `fw 1.5.0`, the clock `set`, and a queue that is draining. A new reading should
+   `fw 1.6.0` (or `1.5.0`), the clock `set`, `key stored`, and a queue that is draining. A new reading should
    appear on the dashboard. Only when the recovery is written and checked, clear the
    old buffer: send `C`, then `Y` within 10 seconds. This deletes the queue and the
    legacy readings from the box.
 
-## Deploying an update to the Pi (after approval only)
+## Updating the Pi
 
-**Do not run these until the previews are approved and the changes are pushed.**
-Don't pull power on the Pi while it runs.
+One command, on the Pi:
 
 ```bash
-cd ~/agrisync && git pull && bash deploy/install_feeds.sh
-sudo systemctl restart agrisync-api agrisync-dashboard
+cd ~/agrisync && bash deploy/update.sh
 ```
 
-Add the new keys to `.env` first (see [Settings in `.env`](#settings-in-env)). The
-installer installs numpy, refreshes the hourly timer, fills the feeds once and
-restarts both web apps.
+It stops if a tracked file was edited by hand, shows the commits it is about to take,
+backs up the database, fast-forwards to `origin/main`, installs the packages, checks
+both apps load, refreshes the feeds timer (`deploy/install_feeds.sh`), restarts the API
+and the dashboard and asks each one if it is healthy. If either is not, it goes back to
+the commit it started from and restarts again. `--no-backup` and `--no-feeds` skip
+those steps. Don't pull power on the Pi while it runs; Phytoplex keeps posting
+throughout and its readings wait in its queue for the minute the API restarts.
+
+Add any new keys to `.env` first (see [Settings in `.env`](#settings-in-env)).
 
 ## Reading the status LED from the ground
 

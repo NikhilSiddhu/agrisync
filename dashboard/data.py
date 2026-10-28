@@ -834,7 +834,7 @@ def feed_health():
         ok = e.get("last_ok")
         if ok is not None and ok.tzinfo is None:
             ok = ok.replace(tzinfo=timezone.utc)
-        out[name] = {"hours_since_ok": round((now - ok).total_seconds() / 3600, 1) if ok else None,
+        out[name] = {"hours_since_ok": round(max(0.0, (now - ok).total_seconds()) / 3600, 1) if ok else None,
                      "failing": "error" in e}
     return out
 

@@ -31,6 +31,8 @@
   --t-close:.38s; /* sheets, dialogs, drawers closing */
   --t-reveal:.8s; /* a section rising into view, and the season ridge drawing in with it */
   --card:#fbfaf6; --hair:rgba(14,27,18,.1);
+  /* Water on the leaf: a cool sage, in the family of the leaf green, never blue. */
+  --wet:#5f8279; --wet-2:rgba(95,130,121,.2);
   color-scheme:light;
 }
 *,*::before,*::after{box-sizing:border-box;}
@@ -59,7 +61,7 @@ button{font:inherit;color:inherit;}
 .ital{font-family:var(--display);font-style:italic;font-weight:400;}
 h1,h2,h3{margin:0;font-weight:400;text-wrap:balance;}
 p{margin:0;}
-h2{font-size:clamp(34px,4.6vw,64px);line-height:.95;}
+h2{font-size:clamp(38px,5.6vw,84px);line-height:.92;}
 h2 .caps{font-size:.86em;} h2 .ital{font-size:1.04em;}
 .eyebrow{font:500 11.5px/1.2 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;gap:10px;}
 .eyebrow::before{content:"";width:18px;height:1px;background:currentColor;opacity:.7;}
@@ -319,17 +321,69 @@ section{position:relative;scroll-margin-top:84px;}
 .empty-n{margin-top:32px;border:1px dashed var(--rule);border-radius:20px;padding:28px;color:var(--ink-2);}
 .empty-n b{display:block;color:var(--ink);font:400 28px/1.1 var(--display);margin-bottom:6px;}
 
-/* tiles */
+/* ------------------------------------------------------------ now
+   Four tiles after Apple Health: the number, and the last 24 hours under it.
+   Slide along any line (pointer, finger, or the arrow keys) and all four
+   tiles show that hour; let go and they return to now. */
+.now-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px 24px;margin-bottom:clamp(14px,2vw,22px);}
+.now-head .sec-head{margin-bottom:0;}
+.now-live{display:inline-flex;align-items:center;gap:10px;min-height:40px;padding:0 16px;border-radius:999px;background:var(--card);border:1px solid var(--hair);
+  font:500 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap;}
+.now-live b{font-weight:500;color:var(--ink);}
+.now-live .sep{width:1px;height:12px;background:var(--rule);}
+.now-live .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex:none;}
+.now-live.on .dot{background:var(--low);box-shadow:0 0 0 3px rgba(91,138,76,.18);}
+@media (prefers-reduced-motion:no-preference){.now-live.on .dot{animation:pulse calc(var(--t-sheet) * 5) var(--ease) infinite;}}
+.now-hint{font:500 10.5px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:14px;}
+@media (hover:none){.now-hint{display:none;}}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
-.tile{padding:16px 16px 14px;display:grid;gap:6px;align-content:start;min-width:0;}
-.tile .k{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);display:flex;justify-content:space-between;gap:8px;}
-.tile .v{font:400 clamp(40px,4.6vw,58px)/.9 var(--display);letter-spacing:-.02em;margin-top:4px;}
+.tile{padding:18px 18px 14px;display:grid;gap:4px;align-content:start;min-width:0;position:relative;
+  transition:box-shadow var(--t-mid) var(--ease),border-color var(--t-mid) var(--ease);}
+.tile .k{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;gap:8px;min-height:20px;}
+.tile .k > span:first-child{margin-right:auto;}
+.tile .when{color:var(--ink);opacity:0;transform:translateY(2px);transition:opacity var(--t-fast) var(--ease),transform var(--t-fast) var(--ease);}
+.tiles.scrub .tile .when{opacity:1;transform:none;}
+.tiles.scrub .tile .est{display:none;}
+.tile .v{font:400 clamp(42px,4.6vw,60px)/.9 var(--display);letter-spacing:-.02em;margin-top:6px;transition:color var(--t-fast) var(--ease);}
 .tile .v small{font-size:.4em;color:var(--ink-3);margin-left:3px;}
-/* 24 h sparkline: ink line, the latest point as a dot, hairlines at the day's low and high. */
-.spark{display:block;width:100%;height:36px;margin-top:8px;overflow:visible;}
-.tile .cap{display:flex;justify-content:space-between;gap:8px;margin-top:2px;font:500 10.5px/1.3 var(--mono);letter-spacing:.06em;color:var(--ink-3);}
-.tile .cap span:last-child{flex:none;}
+.tile .v.none{color:var(--ink-3);}
+.spark-w{position:relative;height:64px;margin:10px -6px 0;padding:0 6px;border-radius:10px;touch-action:pan-y;cursor:crosshair;outline-offset:2px;}
+.spark{display:block;width:100%;height:100%;overflow:visible;}
+.spark .ln{fill:none;stroke:var(--ink);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;}
+.spark .gap{fill:none;stroke:var(--ink-3);stroke-width:1.2;stroke-dasharray:1 4;stroke-linecap:round;opacity:.55;}
+.spark .hl{stroke:var(--rule);stroke-dasharray:2 3;}
+.spark .bar{fill:var(--wet-2);transition:fill var(--t-fast) var(--ease),opacity var(--t-fast) var(--ease);}
+.spark .bar.w{fill:var(--wet);}
+.tiles.scrub .spark .bar{opacity:.45;}
+.tiles.scrub .spark .bar.on{opacity:1;}
+.spark .cur{opacity:0;transition:opacity var(--t-fast) var(--ease);pointer-events:none;}
+.tiles.scrub .spark .cur{opacity:1;}
+.spark .cur line{stroke:var(--ink);stroke-width:1;opacity:.35;}
+.spark .cur circle{fill:var(--ink);stroke:var(--card);stroke-width:2;}
+.spark .end{fill:var(--ink);stroke:var(--card);stroke-width:1.5;transition:opacity var(--t-fast) var(--ease);}
+.tiles.scrub .spark .end,.tiles.scrub .spark .ring{opacity:0;animation:none;}
+.spark .ring{fill:none;stroke:var(--ink);stroke-width:1.2;transform-box:fill-box;transform-origin:center;}
+@media (prefers-reduced-motion:no-preference){.spark .ring{animation:ring calc(var(--t-sheet) * 5) var(--ease) infinite;}}
+/* The line draws in, left to right, when the tile first rises into view. */
+.tile.rv .spark .ln{stroke-dasharray:1;stroke-dashoffset:1;}
+.tile.rv .spark .area,.tile.rv .spark .end,.tile.rv .spark .ring{opacity:0;}
+.tile.rv .spark .bar{transform:scaleY(0);}
+.tile.in .spark .ln{stroke-dashoffset:0;transition:stroke-dashoffset var(--t-reveal) var(--ease) .1s;}
+.tile.in .spark .area{opacity:1;transition:opacity var(--t-sheet) var(--ease) var(--t-mid);}
+.tile.in .spark .end{opacity:1;transition:opacity var(--t-mid) var(--ease) var(--t-reveal);}
+.spark .bar{transform-box:fill-box;transform-origin:50% 100%;}
+.tile.in .spark .bar{transform:none;transition:transform var(--t-sheet) var(--ease);transition-delay:calc(var(--i,0) * 18ms);}
+.tile .cap{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font:500 10.5px/1.3 var(--mono);letter-spacing:.06em;color:var(--ink-3);}
+.tile .cap .t{flex:none;}
+.tile .cap .tw{display:none;color:var(--ink);}
+/* On a phone the tile is too narrow for the hour beside the name: it takes the caption's place instead. */
+@media (max-width:599px){
+  .tile .when{display:none;}
+  .tiles.scrub .tile .cap .tw{display:inline;}
+  .tiles.scrub .tile .cap .mm,.tiles.scrub .tile .cap .t{display:none;}
+}
 .est{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:4px 7px;border-radius:99px;border:1px dashed var(--ink-3);color:var(--ink-3);}
+@media (hover:hover){.tile:hover{border-color:rgba(14,27,18,.16);box-shadow:0 1px 2px rgba(14,27,18,.06),0 14px 32px -12px rgba(14,27,18,.18);}}
 @media (min-width:860px){.tiles{grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;}}
 
 /* charts on paper */
@@ -342,6 +396,14 @@ section{position:relative;scroll-margin-top:84px;}
 @media (min-width:900px){.grid2{grid-template-columns:1fr 1fr;}}
 .panel{padding:18px 18px 14px;min-width:0;}
 .panel .tag{display:block;font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px;}
+/* Panel header: the name left, its own legend right, in the same mono as the
+   72-hour chart (Chart.js draws no legend of its own). */
+.panel .ph{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 16px;margin-bottom:14px;}
+.panel .ph .tag{margin-bottom:0;}
+.legend i.ln,.legend i.dash,.legend i.pt{background:none;border-radius:0;}
+.legend i.ln{width:14px;height:2px;border-radius:1px;background:var(--c);vertical-align:3px;}
+.legend i.dash{width:14px;height:0;border-top:2px dashed var(--c);vertical-align:3px;}
+.legend i.pt{width:8px;height:8px;border-radius:50%;background:var(--c);vertical-align:0;}
 .facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px;}
 .facts > div{padding:14px 16px;display:grid;gap:6px;}
 .facts .v{font:400 34px/1 var(--display);}
@@ -637,7 +699,7 @@ body.ag-in .only-out{display:none;}
 
     <div class="chart-n card">
       <div class="head"><h3>The next 72 hours</h3>
-        <p class="legend"><span><i style="background:var(--ink)"></i>Odds so far</span><span><i style="background:rgba(63,94,57,.22)"></i>Range</span><span><i style="background:rgba(70,110,150,.28)"></i>Leaves wet</span></p></div>
+        <p class="legend"><span><i style="background:var(--ink)"></i>Odds so far</span><span><i style="background:rgba(63,94,57,.22)"></i>Range</span><span><i style="background:var(--wet-2)"></i>Leaves wet</span></p></div>
       <div class="cv"><canvas id="c-odds" aria-label="Cumulative odds of infection over the next 72 hours"></canvas></div>
     </div>
 
@@ -653,25 +715,33 @@ body.ag-in .only-out{display:none;}
 </section>
 
 <!-- ================================================================ now -->
-<section class="sec" id="now" aria-label="Right now">
+<section class="sec" id="now" aria-labelledby="now-h">
   <div class="wrap">
+    <div class="now-head">
+      <div class="sec-head">
+        <p class="eyebrow">Phytoplex, right now</p>
+        <h2 id="now-h"><span class="caps">In the leaves,</span> <span class="ital">right now.</span></h2>
+      </div>
+      {% if latest %}<p class="now-live{{ ' on' if latest.online }}" id="now-live"><span class="dot" aria-hidden="true"></span><span>Read at <b id="now-at">{{ latest.observed_at.split(', ')[-1] if latest.observed_at else '' }}</b></span><span class="sep" aria-hidden="true"></span><span id="now-age">{{ latest.age_minutes|round|int }} min ago</span></p>{% endif %}
+    </div>
+    <p class="now-hint" id="now-hint">Slide along any line to read the hour. All four follow.</p>
     <div class="tiles">
-      <div class="tile card"><p class="k">Temperature</p>
+      <div class="tile card" data-k="air"><p class="k"><span>Temperature</span><span class="when" aria-hidden="true"></span></p>
         <p class="v num" id="v-air">{{ latest.air_temp_c|round(1) if latest and latest.air_temp_c is not none else '—' }}<small>°C</small></p>
-        <svg class="spark" data-k="air" data-u="°C" data-dp="1" aria-hidden="true"></svg>
-        <p class="cap"><span class="mm">Air among the leaves</span><span>24 h</span></p></div>
-      <div class="tile card"><p class="k">Humidity</p>
+        <div class="spark-w" tabindex="0" role="slider" aria-label="Temperature over the last 24 hours" aria-valuemin="0" aria-valuemax="24" aria-valuenow="24"><svg class="spark" data-k="air" data-u="°C" data-dp="1" aria-hidden="true"></svg></div>
+        <p class="cap"><span class="tw" aria-hidden="true"></span><span class="mm">Air among the leaves</span><span class="t">24 h</span></p></div>
+      <div class="tile card" data-k="humidity"><p class="k"><span>Humidity</span><span class="when" aria-hidden="true"></span></p>
         <p class="v num" id="v-hum">{{ latest.humidity_pct|round(0)|int if latest and latest.humidity_pct is not none else '—' }}<small>%</small></p>
-        <svg class="spark" data-k="humidity" data-u="%" data-dp="0" aria-hidden="true"></svg>
-        <p class="cap"><span class="mm">Relative</span><span>24 h</span></p></div>
-      <div class="tile card"><p class="k">Dew point</p>
+        <div class="spark-w" tabindex="0" role="slider" aria-label="Humidity over the last 24 hours" aria-valuemin="0" aria-valuemax="24" aria-valuenow="24"><svg class="spark" data-k="humidity" data-u="%" data-dp="0" aria-hidden="true"></svg></div>
+        <p class="cap"><span class="tw" aria-hidden="true"></span><span class="mm">Relative</span><span class="t">24 h</span></p></div>
+      <div class="tile card" data-k="dew"><p class="k"><span>Dew point</span><span class="when" aria-hidden="true"></span></p>
         <p class="v num" id="v-dew">{{ latest.dew_point_c|round(1) if latest and latest.dew_point_c is not none else '—' }}<small>°C</small></p>
-        <svg class="spark" data-k="dew" data-u="°C" data-dp="1" aria-hidden="true"></svg>
-        <p class="cap"><span class="mm">Dew forms at or below this</span><span>24 h</span></p></div>
-      <div class="tile card"><p class="k">Wetness <span class="est">Computed</span></p>
+        <div class="spark-w" tabindex="0" role="slider" aria-label="Dew point over the last 24 hours" aria-valuemin="0" aria-valuemax="24" aria-valuenow="24"><svg class="spark" data-k="dew" data-u="°C" data-dp="1" aria-hidden="true"></svg></div>
+        <p class="cap"><span class="tw" aria-hidden="true"></span><span class="mm">Dew forms at or below this</span><span class="t">24 h</span></p></div>
+      <div class="tile card" data-k="wetness"><p class="k"><span>Wetness</span><span class="when" aria-hidden="true"></span><span class="est">Computed</span></p>
         <p class="v num" id="v-wet">{% if latest and latest.leaf_wetness is not none %}{{ latest.leaf_wetness|round(0)|int }}{% else %}—{% endif %}<small>/100</small></p>
-        <svg class="spark" data-k="wetness" data-bars="1" aria-hidden="true"></svg>
-        <p class="cap"><span class="mm">From the dew point, not measured</span><span>24 h</span></p></div>
+        <div class="spark-w" tabindex="0" role="slider" aria-label="Leaf wetness over the last 24 hours" aria-valuemin="0" aria-valuemax="24" aria-valuenow="24"><svg class="spark" data-k="wetness" data-bars="1" data-u="/100" data-dp="0" aria-hidden="true"></svg></div>
+        <p class="cap"><span class="tw" aria-hidden="true"></span><span class="mm">From the dew point, not measured</span><span class="t">24 h</span></p></div>
     </div>
     {% if not latest %}<p class="note">No data yet. Waiting for the first reading from Phytoplex.</p>{% endif %}
   </div>
@@ -696,8 +766,8 @@ body.ag-in .only-out{display:none;}
       {% if member %}<span class="member">Full access</span>{% endif %}
     </div>
     <div class="grid2">
-      <div class="panel card"><span class="tag">Temperature and dew point</span><div class="cv"><canvas id="c-temp"></canvas></div></div>
-      <div class="panel card"><span class="tag">Relative humidity</span><div class="cv"><canvas id="c-hum"></canvas></div></div>
+      <div class="panel card"><div class="ph"><span class="tag">Temperature and dew point</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Air</span><span><i class="dash" style="--c:var(--mid)"></i>Dew point</span></span></div><div class="cv"><canvas id="c-temp"></canvas></div></div>
+      <div class="panel card"><div class="ph"><span class="tag">Relative humidity</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Humidity</span></span></div><div class="cv"><canvas id="c-hum"></canvas></div></div>
     </div>
     {% if stats.temp_min is not none %}
     <div class="facts">
@@ -741,9 +811,9 @@ body.ag-in .only-out{display:none;}
     </div>
     {% if sat.available or radar.available %}
     <div class="grid2">
-      <div class="panel card"><span class="tag">Greenness · Sentinel-2 NDVI</span>
+      <div class="panel card"><div class="ph"><span class="tag">Greenness · Sentinel-2 NDVI</span><span class="legend"><span><i class="pt" style="--c:var(--leaf)"></i>Clear pass</span></span></div>
         {% if sat.available %}<div class="cv"><canvas id="c-ndvi"></canvas></div>{% else %}<p class="note">No clear optical passes processed yet.</p>{% endif %}</div>
-      <div class="panel card"><span class="tag">Radar · Sentinel-1 RVI</span>
+      <div class="panel card"><div class="ph"><span class="tag">Radar · Sentinel-1 RVI</span><span class="legend"><span><i class="pt" style="--c:var(--leaf)"></i>Morning</span><span><i class="pt" style="--c:var(--mid)"></i>Evening</span><span><i class="ln" style="--c:var(--ink)"></i>Median of five</span></span></div>
         {% if radar.available %}<div class="cv"><canvas id="c-rvi"></canvas></div>{% else %}<p class="note">No radar passes processed yet.</p>{% endif %}</div>
     </div>
     <div class="facts">
@@ -820,8 +890,8 @@ body.ag-in .only-out{display:none;}
     </div>
     {% if compare.available %}
     <div class="grid2">
-      <div class="panel card"><span class="tag">Daily mean temperature</span><div class="cv"><canvas id="c-cmp-t"></canvas></div></div>
-      <div class="panel card"><span class="tag">Daily mean humidity</span><div class="cv"><canvas id="c-cmp-h"></canvas></div></div>
+      <div class="panel card"><div class="ph"><span class="tag">Daily mean temperature</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Phytoplex</span><span><i class="dash" style="--c:var(--mid)"></i>ERA5-Land</span></span></div><div class="cv"><canvas id="c-cmp-t"></canvas></div></div>
+      <div class="panel card"><div class="ph"><span class="tag">Daily mean humidity</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Phytoplex</span><span><i class="dash" style="--c:var(--mid)"></i>ERA5-Land</span></span></div><div class="cv"><canvas id="c-cmp-h"></canvas></div></div>
     </div>
     {% set t = compare.stats.temp %}{% set h = compare.stats.rh %}
     <div class="facts">
@@ -1161,61 +1231,175 @@ body.ag-in .only-out{display:none;}
 </script>
 <script>
 (function () {
-  /* "Now" tiles: the last 24 hours as a sparkline under each number. An ink
-     line, the latest point as a dot, hairlines at the day's low and high; the
-     caption gives the low and high. Wetness is drawn as one bar an hour. */
+  /* "Now" tiles: the last 24 hours under each number, placed by time, so an
+     hour Phytoplex did not send is a dotted bridge, not a made-up line. The
+     day's low and high are hairlines; the latest reading is a dot with a
+     ring. Wetness is one bar an hour, solid when the leaf counted as wet.
+     Sliding along any tile (pointer, finger or arrow keys) shows that hour
+     in all four tiles; letting go returns them to now. */
   var SP = {{ (spark or {})|tojson }};
-  var WET = 50;
+  var WET = 50, H = 64, PAD = 6, GAP_MS = 90 * 60e3;
+  var tiles = document.querySelector('.tiles');
+  if (!tiles) return;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var live = {};            // the numbers as they stand now, restored after a slide
+  var geo = {};             // per tile: X(), Y(), points, width
+  var at = null;            // the hour being read, epoch ms, or null for now
   function fmt(v, dp) { return Number(v).toFixed(dp); }
+  function clock(t) {       // 4:30 am, India time
+    var d = new Date(t + 19800000), h = d.getUTCHours(), m = d.getUTCMinutes();
+    return (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + (h < 12 ? ' am' : ' pm');
+  }
+  function span() {
+    var hours = SP.hours || 24, end = SP.now || (SP.t && SP.t.length ? SP.t[SP.t.length - 1] : 0);
+    return { end: end, start: end - hours * 3600e3, hours: hours };
+  }
+  function vEl(tile) { return tile.querySelector('.v'); }
+  function setV(tile, txt) { var v = vEl(tile); if (v && v.firstChild) v.firstChild.nodeValue = txt; }
   function draw() {
     if (!SP || !SP.t) return;
-    var HOURS = SP.hours || 24, end = SP.now || (SP.t.length ? SP.t[SP.t.length - 1] : 0), span = HOURS * 3600e3, start = end - span;
-    document.querySelectorAll('.spark[data-k]').forEach(function (svg) {
-      var raw = SP[svg.dataset.k] || [], pts = [];
-      raw.forEach(function (v, i) { if (v !== null && v !== undefined && SP.t[i] >= start && SP.t[i] <= end) pts.push([SP.t[i], v]); });
-      var cap = svg.parentNode.querySelector('.cap .mm');
-      if (pts.length < 2) { svg.innerHTML = ''; if (cap) cap.textContent = 'No readings in the last 24 h'; return; }
-      var W = Math.max(60, Math.round(svg.getBoundingClientRect().width)), H = 36, pad = 4;
+    var w = span();
+    tiles.querySelectorAll('.tile[data-k]').forEach(function (tile) {
+      var svg = tile.querySelector('.spark'), k = tile.dataset.k, raw = SP[k] || [], pts = [];
+      raw.forEach(function (v, i) { if (v !== null && v !== undefined && SP.t[i] >= w.start && SP.t[i] <= w.end) pts.push([SP.t[i], v]); });
+      var cap = tile.querySelector('.cap .mm');
+      if (live[k] === undefined) { var v = vEl(tile); live[k] = v && v.firstChild ? v.firstChild.nodeValue : '—'; }
+      if (pts.length < 2) { svg.innerHTML = ''; geo[k] = null; if (cap) cap.textContent = 'No readings in the last 24 h'; return; }
+      var W = Math.max(60, Math.round(svg.getBoundingClientRect().width));
       svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
-      // Placed by time across the day, so a quiet stretch shows as a gap.
-      var X = function (t) { return pad + (t - start) / span * (W - 2 * pad); };
-      var out = '';
+      var X = function (t) { return 4 + (t - w.start) / (w.end - w.start) * (W - 8); };
+      var out = '', dp = +svg.dataset.dp || 0, u = svg.dataset.u || '';
       if (svg.dataset.bars) {
-        var slot = (W - 2 * pad) / HOURS, bw = Math.max(1.5, slot - 2), wet = 0;
-        pts.forEach(function (p) {
+        var slot = (W - 8) / w.hours, bw = Math.max(2, slot - 3), wet = 0;
+        pts.forEach(function (p, i) {
           if (p[1] >= WET) wet++;
-          var h = Math.max(1.5, p[1] / 100 * (H - 6));
-          out += '<rect x="' + (X(p[0]) + (slot - bw) / 2).toFixed(1) + '" y="' + (H - 2 - h).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) +
-                 '" rx="1" fill="' + (p[1] >= WET ? 'rgba(70,110,150,.62)' : 'rgba(70,110,150,.22)') + '"/>';
+          var h = Math.max(2, p[1] / 100 * (H - 10));
+          out += '<rect class="bar' + (p[1] >= WET ? ' w' : '') + '" data-t="' + p[0] + '" style="--i:' + i + '" x="' + (X(p[0]) + (slot - bw) / 2).toFixed(1) +
+                 '" y="' + (H - 2 - h).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="2"/>';
         });
         out += '<line x1="0" x2="' + W + '" y1="' + (H - 1.5) + '" y2="' + (H - 1.5) + '" stroke="rgba(14,27,18,.12)"/>';
+        out += '<g class="cur"><line y1="0" y2="' + H + '"/></g>';
         svg.innerHTML = out;
+        geo[k] = { X: X, pts: pts, bars: true, dp: dp, u: u };
         if (cap) cap.textContent = 'Wet ' + wet + ' of ' + pts.length + ' h';
         return;
       }
       var vals = pts.map(function (p) { return p[1]; });
       var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), rng = Math.max(hi - lo, 1e-6);
-      var Y = function (v) { return H - pad - (v - lo) / rng * (H - 2 * pad); };
-      out += '<line x1="0" x2="' + W + '" y1="' + Y(hi).toFixed(1) + '" y2="' + Y(hi).toFixed(1) + '" stroke="rgba(14,27,18,.14)" stroke-dasharray="2 3"/>' +
-             '<line x1="0" x2="' + W + '" y1="' + Y(lo).toFixed(1) + '" y2="' + Y(lo).toFixed(1) + '" stroke="rgba(14,27,18,.14)" stroke-dasharray="2 3"/>';
-      var line = function (seg) { return seg.length > 1 ? '<polyline points="' + seg.join(' ') + '" fill="none" stroke="#0e1b12" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
-                                                          : '<circle cx="' + seg[0].split(',')[0] + '" cy="' + seg[0].split(',')[1] + '" r="1.2" fill="#0e1b12"/>'; };
-      var seg = [];
-      pts.forEach(function (p, i) {
-        if (i && p[0] - pts[i - 1][0] > 90 * 60e3) { out += line(seg); seg = []; }   // over an hour and a half missing: a gap
-        seg.push(X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1));
+      var Y = function (v) { return H - PAD - (v - lo) / rng * (H - 2 * PAD); };
+      var id = 'g-' + k;
+      out += '<defs><linearGradient id="' + id + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0e1b12" stop-opacity=".10"/><stop offset="1" stop-color="#0e1b12" stop-opacity="0"/></linearGradient></defs>';
+      out += '<line class="hl" x1="0" x2="' + W + '" y1="' + Y(hi).toFixed(1) + '" y2="' + Y(hi).toFixed(1) + '"/>' +
+             '<line class="hl" x1="0" x2="' + W + '" y1="' + Y(lo).toFixed(1) + '" y2="' + Y(lo).toFixed(1) + '"/>';
+      // Runs of readings no more than 90 minutes apart; dotted bridges between them.
+      var runs = [[pts[0]]];
+      for (var i = 1; i < pts.length; i++) {
+        if (pts[i][0] - pts[i - 1][0] > GAP_MS) runs.push([]);
+        runs[runs.length - 1].push(pts[i]);
+      }
+      var xy = function (p) { return X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1); };
+      runs.forEach(function (r, j) {
+        if (j) { var a = runs[j - 1][runs[j - 1].length - 1], b = r[0]; out += '<path class="gap" d="M' + xy(a) + ' L' + xy(b) + '"/>'; }
+        if (r.length > 1) {
+          out += '<path class="area" fill="url(#' + id + ')" d="M' + X(r[0][0]).toFixed(1) + ',' + H + ' L' + r.map(xy).join(' L') + ' L' + X(r[r.length - 1][0]).toFixed(1) + ',' + H + ' Z"/>';
+          out += '<path class="ln" pathLength="1" d="M' + r.map(xy).join(' L') + '"/>';
+        } else out += '<circle class="ln" cx="' + X(r[0][0]).toFixed(1) + '" cy="' + Y(r[0][1]).toFixed(1) + '" r="1.6" fill="#0e1b12"/>';
       });
-      out += line(seg);
       var last = pts[pts.length - 1];
-      out += '<circle cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="3.2" fill="#0e1b12" stroke="#fbfaf6" stroke-width="1.5"/>';
+      if (!reduced) out += '<circle class="ring" cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="6"/>';
+      out += '<circle class="end" cx="' + X(last[0]).toFixed(1) + '" cy="' + Y(last[1]).toFixed(1) + '" r="3.4"/>';
+      out += '<g class="cur"><line y1="-4" y2="' + (H + 2) + '"/><circle r="4"/></g>';
       svg.innerHTML = out;
-      var dp = +svg.dataset.dp || 0, u = svg.dataset.u || '';
+      geo[k] = { X: X, Y: Y, pts: pts, dp: dp, u: u };
       if (cap) cap.textContent = fmt(lo, dp) + '–' + fmt(hi, dp) + u;
     });
+    if (at !== null) show(at);
   }
+  // The reading nearest to t in one tile, if one lies within half an hour.
+  function near(g, t) {
+    var best = null, d = Infinity;
+    g.pts.forEach(function (p) { var e = Math.abs(p[0] - t); if (e < d) { d = e; best = p; } });
+    return d <= 30 * 60e3 ? best : null;
+  }
+  function show(t) {
+    at = t;
+    tiles.classList.add('scrub');
+    tiles.querySelectorAll('.tile[data-k]').forEach(function (tile) {
+      var k = tile.dataset.k, g = geo[k], when = tile.querySelector('.when');
+      var sw = tile.querySelector('.spark-w');
+      if (when) when.textContent = clock(t);
+      var tw = tile.querySelector('.cap .tw'); if (tw) tw.textContent = clock(t);
+      if (!g) return;
+      var p = near(g, t), cur = tile.querySelector('.cur');
+      if (cur) {
+        var cx = g.X(p ? p[0] : t);
+        cur.querySelector('line').setAttribute('x1', cx.toFixed(1)); cur.querySelector('line').setAttribute('x2', cx.toFixed(1));
+        var c = cur.querySelector('circle');
+        if (c) { c.setAttribute('cx', cx.toFixed(1)); c.setAttribute('cy', p ? g.Y(p[1]).toFixed(1) : -99); }
+      }
+      if (g.bars) tile.querySelectorAll('.bar').forEach(function (b) { b.classList.toggle('on', p && +b.dataset.t === p[0]); });
+      setV(tile, p ? fmt(p[1], g.dp) : '—');
+      vEl(tile).classList.toggle('none', !p);
+      if (sw) { sw.setAttribute('aria-valuenow', String(Math.round((t - span().start) / 3600e3)));
+                sw.setAttribute('aria-valuetext', (p ? fmt(p[1], g.dp) + ' ' + g.u.replace('/', 'out of ') : 'no reading') + ' at ' + clock(t)); }
+    });
+  }
+  function clear() {
+    at = null;
+    tiles.classList.remove('scrub');
+    tiles.querySelectorAll('.tile[data-k]').forEach(function (tile) {
+      var k = tile.dataset.k;
+      if (live[k] !== undefined) setV(tile, live[k]);
+      vEl(tile).classList.remove('none');
+      var sw = tile.querySelector('.spark-w');
+      if (sw) { sw.setAttribute('aria-valuenow', '24'); sw.removeAttribute('aria-valuetext'); }
+    });
+  }
+  // Snap to the hours that exist in the record.
+  function hourAt(sw, clientX) {
+    var r = sw.querySelector('.spark').getBoundingClientRect(), w = span();
+    if (!SP || !SP.t || r.width < 10) return null;
+    var x = Math.max(0, Math.min(r.width, clientX - r.left));
+    var t = w.start + (x - 4) / (r.width - 8) * (w.end - w.start);
+    var best = null, d = Infinity;
+    (SP.t || []).forEach(function (s) { if (s >= w.start && s <= w.end) { var e = Math.abs(s - t); if (e < d) { d = e; best = s; } } });
+    return best;
+  }
+  var down = null;
+  tiles.querySelectorAll('.spark-w').forEach(function (sw) {
+    sw.addEventListener('pointermove', function (e) {
+      if (e.pointerType === 'touch' && down !== e.pointerId) return;
+      var t = hourAt(sw, e.clientX); if (t !== null && t !== at) show(t);
+    });
+    sw.addEventListener('pointerdown', function (e) {
+      down = e.pointerId;
+      var t = hourAt(sw, e.clientX); if (t !== null) show(t);
+    });
+    var end = function (e) { if (e.pointerType === 'touch' || e.type === 'pointerleave') { down = null; clear(); } };
+    sw.addEventListener('pointerup', end);
+    sw.addEventListener('pointercancel', end);
+    sw.addEventListener('pointerleave', function (e) { if (e.pointerType !== 'touch') { down = null; clear(); } });
+    sw.addEventListener('keydown', function (e) {
+      var w = span(), hrs = (SP.t || []).filter(function (s) { return s >= w.start && s <= w.end; });
+      if (!hrs.length) return;
+      var i = at === null ? hrs.length - 1 : hrs.indexOf(at);
+      if (e.key === 'ArrowLeft') i = Math.max(0, (at === null ? hrs.length : i) - 1);
+      else if (e.key === 'ArrowRight') { if (at === null) return; i = Math.min(hrs.length - 1, i + 1); }
+      else if (e.key === 'Home') i = 0;
+      else if (e.key === 'End') i = hrs.length - 1;
+      else if (e.key === 'Escape') { if (at !== null) { clear(); e.preventDefault(); } return; }
+      else return;
+      e.preventDefault();
+      show(hrs[i]);
+    });
+    sw.addEventListener('blur', function () { if (at !== null) clear(); });
+  });
   draw();
-  var t = null;
-  window.addEventListener('resize', function () { clearTimeout(t); t = setTimeout(draw, 150); }, { passive: true });
+  var rt = null;
+  window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(draw, 150); }, { passive: true });
+  // The minute refresh (below) updates the numbers through this, so a slide
+  // in progress is not overwritten and letting go shows the fresh value.
+  window.AGNow = { set: function (k, txt) { live[k] = txt; if (at === null) { var tile = tiles.querySelector('.tile[data-k="' + k + '"]'); if (tile) setV(tile, txt); } } };
 })();
 </script>
 <script>
@@ -1320,10 +1504,17 @@ body.ag-in .only-out{display:none;}
   var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reducedMotion) Chart.defaults.animation = false;
   else { Chart.defaults.animation.duration = parseFloat(C('--t-sheet')) * 1000; Chart.defaults.animation.easing = 'easeOutQuint'; }
+  var narrow = window.matchMedia && window.matchMedia('(max-width: 599px)').matches;
   var base = {responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false},
-    plugins:{legend:{labels:{boxWidth:8, boxHeight:8, usePointStyle:true, pointStyle:'circle', font:{size:11, weight:'500'}, padding:14}}},
+    plugins:{legend:{display:false}, tooltip:{callbacks:{label:function(c){
+      if (c.parsed.y === null || c.parsed.y === undefined) return null;
+      var u = c.dataset.unit || '', dp = c.dataset.dp === undefined ? 1 : c.dataset.dp;
+      return c.dataset.label + '  ' + Number(c.parsed.y).toFixed(dp) + u; }}}},
     elements:{point:{radius:0, hitRadius:14}, line:{tension:.35, borderWidth:2}},
-    scales:{x:{grid:{display:false}, ticks:{maxTicksLimit:7, maxRotation:0}}, y:{border:{display:false}, grid:{color:'rgba(14,27,18,.08)'}, ticks:{maxTicksLimit:5}}}};
+    scales:{x:{grid:{display:false}, ticks:{maxTicksLimit:narrow ? 4 : 7, maxRotation:0, autoSkipPadding:14,
+      // "15 Oct 05:30" is too long four times across a phone: the date alone there.
+      callback:function(v){ var l = String(this.getLabelForValue(v)), p = l.split(' '); return narrow && p.length === 3 ? p[0] + ' ' + p[1] : l; }}},
+      y:{border:{display:false}, grid:{color:'rgba(14,27,18,.08)'}, ticks:{maxTicksLimit:5}}}};
   function withY(y){ return Object.assign({}, base, {scales:Object.assign({}, base.scales, {y:Object.assign({}, base.scales.y, y)})}); }
   var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   var day = function(v){ var d = new Date(v + 19800000); return d.getUTCDate() + ' ' + MON[d.getUTCMonth()]; };
@@ -1337,14 +1528,14 @@ body.ag-in .only-out{display:none;}
       {type:'line', label:'Odds so far', data:OD.p.map(function(v){return Math.round(v*1000)/10;}), borderColor:C('--ink'), yAxisID:'y', order:1},
       {type:'line', label:'Range high', data:OD.hi.map(function(v){return Math.round(v*1000)/10;}), borderColor:'rgba(0,0,0,0)', backgroundColor:'rgba(63,94,57,.16)', fill:'+1', yAxisID:'y', order:2},
       {type:'line', label:'Range low', data:OD.lo.map(function(v){return Math.round(v*1000)/10;}), borderColor:'rgba(0,0,0,0)', fill:false, yAxisID:'y', order:3},
-      {type:'bar', label:'Leaves wet', data:OD.wet.map(function(v){return Math.round((v||0)*100);}), backgroundColor:'rgba(70,110,150,.16)', borderWidth:0, yAxisID:'w', barPercentage:1, categoryPercentage:1, order:4}
+      {type:'bar', label:'Leaves wet', data:OD.wet.map(function(v){return Math.round((v||0)*100);}), backgroundColor:'rgba(95,130,121,.2)', hoverBackgroundColor:'rgba(95,130,121,.34)', borderWidth:0, yAxisID:'w', barPercentage:1, categoryPercentage:1, order:4}
     ]}, options:{responsive:true, maintainAspectRatio:false, interaction:{mode:'index', intersect:false},
       plugins:{legend:{display:false}, tooltip:{callbacks:{label:function(c){
         if (c.dataset.label === 'Leaves wet') return 'Leaves wet in ' + c.parsed.y + '% of runs';
         if (c.dataset.label === 'Odds so far') return 'Odds so far ' + c.parsed.y + '%';
         return null; }}}},
       elements:{point:{radius:0, hitRadius:10}, line:{tension:.3, borderWidth:2}},
-      scales:{x:{grid:{display:false}, ticks:{color:on, maxTicksLimit:7, maxRotation:0, autoSkip:true}},
+      scales:{x:{grid:{display:false}, ticks:{color:on, maxTicksLimit:narrow ? 4 : 7, maxRotation:0, autoSkip:true}},
               y:{min:0, suggestedMax:50, grid:{color:'rgba(14,27,18,.08)'}, border:{display:false}, ticks:{color:on, callback:function(v){return v+'%';}, maxTicksLimit:5}},
               w:{display:false, min:0, max:260}}}});
   }
@@ -1353,10 +1544,10 @@ body.ag-in .only-out{display:none;}
   var S = {{ series|tojson }};
   if (S && S.labels && S.labels.length) {
     new Chart(document.getElementById('c-temp'), {type:'line', data:{labels:S.labels, datasets:[
-      {label:'Air', data:S.air, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start'},
-      {label:'Dew point', data:S.dew, borderColor:C('--mid'), borderDash:[5,4], fill:false}]}, options:base});
+      {label:'Air', unit:' °C', data:S.air, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start'},
+      {label:'Dew point', unit:' °C', data:S.dew, borderColor:C('--mid'), borderDash:[5,4], fill:false}]}, options:base});
     new Chart(document.getElementById('c-hum'), {type:'line', data:{labels:S.labels, datasets:[
-      {label:'Humidity %', data:S.humidity, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:true}]}, options:withY({min:0, max:100})});
+      {label:'Humidity', unit:'%', dp:0, data:S.humidity, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:true}]}, options:withY({min:0, max:100})});
   }
 
   /* orbit */
@@ -1384,20 +1575,29 @@ body.ag-in .only-out{display:none;}
   el = document.getElementById('c-cmp-t');
   if (el && CMP && CMP.labels.length) {
     new Chart(el, {type:'line', data:{labels:CMP.labels, datasets:[
-      {label:'Phytoplex', data:CMP.field_temp, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
-      {label:'ERA5-Land', data:CMP.era5_temp, borderColor:C('--mid'), borderDash:[5,4]}]}, options:base});
+      {label:'Phytoplex', unit:' °C', data:CMP.field_temp, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
+      {label:'ERA5-Land', unit:' °C', data:CMP.era5_temp, borderColor:C('--mid'), borderDash:[5,4]}]}, options:base});
     new Chart(document.getElementById('c-cmp-h'), {type:'line', data:{labels:CMP.labels, datasets:[
-      {label:'Phytoplex', data:CMP.field_rh, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
-      {label:'ERA5-Land', data:CMP.era5_rh, borderColor:C('--mid'), borderDash:[5,4]}]}, options:withY({min:0, max:100})});
+      {label:'Phytoplex', unit:'%', dp:0, data:CMP.field_rh, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
+      {label:'ERA5-Land', unit:'%', dp:0, data:CMP.era5_rh, borderColor:C('--mid'), borderDash:[5,4]}]}, options:withY({min:0, max:100})});
   }
 
   /* keep the tiles and the live chip fresh */
   setInterval(function(){
     fetch('/data.json?hours={{ hours }}').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if (!d || !d.latest) return;
-      function set(id, v, dp){ var e = document.getElementById(id); if (e && v !== null && v !== undefined) e.childNodes[0].nodeValue = Number(v).toFixed(dp); }
-      set('v-air', d.latest.air_temp_c, 1); set('v-hum', d.latest.humidity_pct, 0);
-      set('v-dew', d.latest.dew_point_c, 1); set('v-wet', d.latest.leaf_wetness, 0);
+      function set(k, id, v, dp){
+        if (v === null || v === undefined) return;
+        var txt = Number(v).toFixed(dp);
+        if (window.AGNow) window.AGNow.set(k, txt);
+        else { var e = document.getElementById(id); if (e) e.childNodes[0].nodeValue = txt; }
+      }
+      set('air', 'v-air', d.latest.air_temp_c, 1); set('humidity', 'v-hum', d.latest.humidity_pct, 0);
+      set('dew', 'v-dew', d.latest.dew_point_c, 1); set('wetness', 'v-wet', d.latest.leaf_wetness, 0);
+      var nat = document.getElementById('now-at'), nag = document.getElementById('now-age'), nl = document.getElementById('now-live');
+      if (nat && d.latest.observed_at) nat.textContent = d.latest.observed_at.split(', ').pop();
+      if (nag && d.latest.age_minutes !== null && d.latest.age_minutes !== undefined) nag.textContent = Math.round(d.latest.age_minutes) + ' min ago';
+      if (nl) nl.classList.toggle('on', !!d.latest.online);
       var chip = document.getElementById('live-chip'), t = document.getElementById('live-t');
       if (chip && d.latest.online && d.latest.observed_at) {
         chip.className = 'live on';

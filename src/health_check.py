@@ -48,6 +48,20 @@ def core_sensors():
 CORE_SENSORS = ALL_SENSORS
 
 
+# The rain plate reads 4095 dry and falls toward 0 as water bridges it.
+RAIN_WET_BELOW = 2000
+# A running count past a million is a chattering input, not rain.
+RAIN_TIPS_CHATTER = 1_000_000
+
+
+def _debounced(firmware):
+    """1.6.0 and later debounce the rain input, so a big count is real."""
+    try:
+        return tuple(int(x) for x in str(firmware).split(".")) >= (1, 6, 0)
+    except ValueError:
+        return False
+
+
 def stale_minutes():
     return int(os.getenv("ALERT_STALE_MINUTES", "30"))
 
@@ -120,6 +134,25 @@ def assess_device(db, device_id, window_hours=6):
         if status == STATUS_OK:
             status = STATUS_DEGRADED
 
+    # Faults that leave data flowing but wrong (found in the field, Oct 2026).
+    # Neither feeds the odds: rain comes from ERA5. They are here so a broken
+    # part is named, not discovered in December.
+    plate = [r["rain_analog"] for r in db.readings.find(
+        {"device_id": device_id, "ts": {"$gte": now - timedelta(hours=48)},
+         "rain_analog": {"$exists": True}}, {"rain_analog": 1, "_id": 0})
+        if r.get("rain_analog") is not None]
+    if len(plate) >= 100 and max(plate) < RAIN_WET_BELOW:
+        problems.append("rain plate has read wet for 48 hours without a break: "
+                        "corroded or shorted; it says nothing until it is cleaned or replaced")
+        if status == STATUS_OK:
+            status = STATUS_DEGRADED
+    tips = latest.get("rain_tips")
+    if tips is not None and tips > RAIN_TIPS_CHATTER and not _debounced(latest.get("firmware")):
+        problems.append(f"rain counter reads {tips:,.0f}: the input chatters and the count means "
+                        "nothing; firmware 1.6.0 debounces it")
+        if status == STATUS_OK:
+            status = STATUS_DEGRADED
+
     backfilled = sum(1 for r in recent if r.get("backfilled"))
 
     result = {
@@ -135,6 +168,10 @@ def assess_device(db, device_id, window_hours=6):
         "battery_v": battery,
         "rssi": rssi,
         "firmware": latest.get("firmware"),
+        # 1.6.0: the interval it runs at, its memory, and the last word on an update
+        "interval_s": latest.get("interval_s"),
+        "free_heap": latest.get("free_heap"),
+        "ota": (db.feeds.find_one({"_id": f"ota:{device_id}"}) or {}).get("last"),
     }
 
     # Visible in the API and the dashboard, so a muted sensor is never a

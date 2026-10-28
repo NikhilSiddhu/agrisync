@@ -261,7 +261,7 @@ public:
    * there is no usable clock.
    */
   int postJson(const char *host, const char *path, const String &body,
-               const char *hmacSecret) {
+               const char *hmacSecret, String *reply = nullptr) {
     long ts = syncTime();
     if (!ts) { trace("--", "no clock, cannot sign"); return -2; }
 
@@ -295,7 +295,11 @@ public:
       return -1;
     }
 
-    _s.print(body);
+    // A reading is ~250 bytes and goes in one write. A 1.6.0 batch is up to
+    // 3.6 KB, and this modem duplicates bytes when fed much more than that
+    // without a pause (see postBinary), so long bodies are paced the same way.
+    if (body.length() > 1024) writePaced((const uint8_t *)body.c_str(), body.length());
+    else _s.print(body);
     String tmp;
     if (!readUntil("OK", tmp, 12000)) {
       trace("--", "body not accepted");
@@ -318,15 +322,72 @@ public:
     readRestOfLine(resp, 5000);
     trace("<<", resp);
 
-    int status = -1;
-    int i  = resp.indexOf("+HTTPACTION:");
-    int c1 = resp.indexOf(',', i);
-    int c2 = resp.indexOf(',', c1 + 1);
-    if (c1 > 0 && c2 > c1) status = resp.substring(c1 + 1, c2).toInt();
+    long len = 0;
+    int status = actionResult(resp, len);
+
+    // From 1.6.0 the reply carries the Pi's signed settings. Read at most
+    // 768 bytes of it: the Pi keeps it well under that.
+    if (reply) {
+      *reply = "";
+      if (status >= 200 && status < 300 && len > 0) readBody(0, len > 768 ? 768 : len, *reply);
+    }
 
     at("AT+HTTPTERM", 5000);
     return status;
   }
+
+  /*
+   * GET, signed over the path (1.6.0: firmware pieces). There is no body to
+   * sign, so the signature covers "<ts>." + path, query included, which ties
+   * it to that one request. The reply, up to maxLen bytes, lands in out.
+   */
+  int getSigned(const char *host, const String &path, const char *hmacSecret,
+                String &out, size_t maxLen) {
+    out = "";
+    long ts = syncTime();
+    if (!ts) { trace("--", "no clock, cannot sign"); return -2; }
+    String hdr = String(ts) + "." + hmacHex(hmacSecret, String(ts) + "." + path);
+
+    at("AT+HTTPTERM", 3000);
+    if (!at("AT+HTTPINIT", 8000)) {
+      delay(1000);
+      if (!at("AT+HTTPINIT", 8000)) return -1;
+    }
+    String u = "AT+HTTPPARA=\"URL\",\"http://" + String(host) + path + "\"";
+    if (!at(u.c_str(), 5000)) { at("AT+HTTPTERM", 3000); return -1; }
+    String h = "AT+HTTPPARA=\"USERDATA\",\"X-Sig: " + hdr + "\"";
+    at(h.c_str(), 5000);
+
+    trace(">>", "AT+HTTPACTION=0");
+    String resp;
+    _s.print("AT+HTTPACTION=0"); _s.print("\r\n");     // 0 = GET
+    if (!readUntil("+HTTPACTION:", resp, 60000)) {
+      at("AT+HTTPTERM", 3000);
+      return -1;
+    }
+    readRestOfLine(resp, 5000);
+    trace("<<", resp);
+    long len = 0;
+    int status = actionResult(resp, len);
+    if (status == 200 && len > 0) {
+      if ((size_t)len > maxLen) { at("AT+HTTPTERM", 3000); return -4; }
+      // In pieces of up to 1000 bytes: readUntil keeps at most ~1400
+      // characters of a reply, and a piece plus its framing fits in that.
+      for (long off = 0; off < len; ) {
+        long n = len - off > 1000 ? 1000 : len - off;
+        String piece;
+        if (!readBody(off, n, piece) || (long)piece.length() != n) { at("AT+HTTPTERM", 3000); return -1; }
+        out += piece;
+        off += n;
+      }
+    }
+    at("AT+HTTPTERM", 5000);
+    return status;
+  }
+
+  /* HMAC-SHA256 in hex, the same as every signature this file sends. Public
+     so main.cpp can check the Pi's signature on the settings it sends back. */
+  static String sign(const char *key, const String &msg) { return hmacHex(key, msg); }
 
   /*
    * POST raw bytes - used for JPEGs from the camera.
@@ -429,15 +490,7 @@ public:
        before more is queued, and a longer breath every 2KB. Costs well under
        a second on a 32KB body, which is nothing against an upload that
        verifies. */
-    size_t sent = 0;
-    while (sent < olen) {
-      size_t w = (olen - sent > 256) ? 256 : (olen - sent);
-      _s.write(b64 + sent, w);
-      _s.flush();
-      sent += w;
-      delay(4);
-      if ((sent & 2047) == 0) delay(20);
-    }
+    writePaced(b64, olen);
     free(b64);
 
     String tmp;
@@ -476,6 +529,71 @@ public:
   void wake()  { at("AT+CSCLK=0", 2000); }
 
 private:
+  /* 256 bytes at a time, flushed, with a breath every 2 KB (see postBinary). */
+  void writePaced(const uint8_t *p, size_t n) {
+    size_t sent = 0;
+    while (sent < n) {
+      size_t w = (n - sent > 256) ? 256 : (n - sent);
+      _s.write(p + sent, w);
+      _s.flush();
+      sent += w;
+      delay(4);
+      if ((sent & 2047) == 0) delay(20);
+    }
+  }
+
+  /* "+HTTPACTION: <method>,<status>,<length>" -> status, and length. */
+  static int actionResult(const String &resp, long &len) {
+    int status = -1;
+    len = 0;
+    int i  = resp.indexOf("+HTTPACTION:");
+    if (i < 0) return -1;
+    int c1 = resp.indexOf(',', i);
+    int c2 = c1 > 0 ? resp.indexOf(',', c1 + 1) : -1;
+    if (c1 > 0 && c2 > c1) {
+      status = resp.substring(c1 + 1, c2).toInt();
+      len = resp.substring(c2 + 1).toInt();
+    }
+    return status;
+  }
+
+  /*
+   * n bytes of the reply from offset off:
+   *     AT+HTTPREAD=<off>,<n>
+   *     OK
+   *     +HTTPREAD: <n>
+   *     <n bytes>
+   *     +HTTPREAD: 0
+   * Only text replies come this way (JSON, base64), so the bytes are safe in
+   * a String.
+   */
+  bool readBody(long off, long n, String &out) {
+    out = "";
+    char cmd[48];
+    snprintf(cmd, sizeof(cmd), "AT+HTTPREAD=%ld,%ld", off, n);
+    while (_s.available()) _s.read();
+    trace(">>", cmd);
+    _s.print(cmd); _s.print("\r\n");
+    String r;
+    if (!readUntil("+HTTPREAD: 0", r, 15000)) { trace("--", "no HTTPREAD end"); return false; }
+    settle();
+    int i = r.indexOf("+HTTPREAD:");
+    while (i >= 0) {
+      int j = i + 10;
+      while (j < (int)r.length() && r[j] == ' ') j++;
+      if (r.substring(j, j + 5) == "DATA,") j += 5;      // some firmware says "+HTTPREAD: DATA,<n>"
+      long got = r.substring(j).toInt();
+      int nl = r.indexOf('\n', j);
+      if (got > 0 && nl > 0) {
+        if (nl + 1 + got > (long)r.length()) return false;
+        out = r.substring(nl + 1, nl + 1 + got);
+        return true;
+      }
+      i = r.indexOf("+HTTPREAD:", i + 10);
+    }
+    return false;
+  }
+
   HardwareSerial &_s;
   int _rx, _tx;
   const char *_apn;
