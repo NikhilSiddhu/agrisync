@@ -104,8 +104,9 @@ if curl -fsS -m 8 http://127.0.0.1:8080/summary.json -o /tmp/agrisync-summary.js
   .venv/bin/python - <<'PY' || true
 import json
 v = json.load(open("/tmp/agrisync-summary.json")).get("versions") or {}
-print("Running: Phytoplex firmware %s, Pi software %s (%s), odds engine %s."
-      % (v.get("firmware") or "unknown", v.get("release"), v.get("commit") or "no commit", v.get("odds_engine")))
+n = v.get("names") or {}
+print("Running: %s on the pole, %s on the Pi (commit %s), %s for the odds."
+      % (n.get("box") or "Phytoplex (no reading yet)", n.get("pi"), v.get("commit") or "unknown", n.get("odds")))
 PY
 else
   echo "Note: /summary.json did not answer, so agrisync.tech keeps showing its built-in numbers until it does."

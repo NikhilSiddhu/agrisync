@@ -1029,12 +1029,12 @@ body.ag-in .only-out{display:none;}
       <nav aria-label="Footer"><a href="https://agrisync.tech">agrisync.tech</a><a href="https://agrisync.tech/#how">How it works</a><a href="https://www.linkedin.com/in/nikhil-siddhu-411406366" rel="noopener">LinkedIn</a><a href="https://x.com/nikhilsiddhu_" rel="noopener">X</a></nav>
       <p>© 2026 AgriSync</p>
     </div>
-    {%- set v = versions or {} %}
+    {%- set n = (versions or {}).names or {} %}
     <p class="foot-ver" data-live="versions">
-      <span><i>Phytoplex firmware</i> {{ v.firmware or '—' }}</span>
-      {% if v.next_firmware and v.next_firmware != v.firmware %}<span><i>Next</i> {{ v.next_firmware }}, after the season</span>{% endif %}
-      <span><i>Pi software</i> {{ v.release or '—' }}{% if v.commit %} · {{ v.commit }}{% endif %}</span>
-      <span><i>Odds engine</i> {{ v.odds_engine or '—' }}</span>
+      <span><i>On the pole</i> {{ n.box or 'Phytoplex' }}</span>
+      {% if n.next_box %}<span><i>Next</i> {{ n.next_box }}</span>{% endif %}
+      <span><i>On the Pi</i> {{ n.pi or 'Rootstock' }}</span>
+      <span><i>The odds</i> {{ n.odds or 'Sporecast' }}</span>
     </p>
     <p class="wordmark" aria-hidden="true">AgriSync</p>
   </div>

@@ -213,20 +213,31 @@ def test_versions_come_from_the_readings_and_the_checkout(db, client):
     from src import version
     s = client.get("/summary.json").get_json()
     assert s["latest"]["firmware"] == "1.4.0"
-    v = s["versions"]
-    assert v["firmware"] == "1.4.0"
-    assert v["release"] == version.RELEASE
-    assert v["next_firmware"] == version.NEXT_FIRMWARE
-    assert v["odds_engine"] == version.ODDS_ENGINE
+    n = s["versions"]["names"]
+    assert n["box"] == "Phytoplex 1.4"
+    assert n["next_box"] == "Phytoplex " + version.short(version.NEXT_FIRMWARE)
+    assert n["pi"] == "Rootstock " + version.ROOTSTOCK
+    assert n["odds"] == "Sporecast " + version.SPORECAST
     body = client.get("/").data.decode()
-    assert 'data-live="versions"' in body
-    assert version.RELEASE in body and "1.4.0" in body
+    foot = body[body.index('data-live="versions"'):]
+    foot = foot[:foot.index("</p>")]
+    assert "Phytoplex 1.4" in foot and "Rootstock" in foot and "Sporecast" in foot
+    # Names only: no dates, no commit, no page version.
+    import re
+    assert not re.search(r"20\d\d|\b[0-9a-f]{7}\b", foot), foot
 
 
 def test_versions_survive_readings_without_firmware(client):
     s = client.get("/summary.json").get_json()
-    assert s["versions"]["firmware"] is None
-    assert "Phytoplex firmware</i> —" in client.get("/").data.decode()
+    assert s["versions"]["firmware"] is None and s["versions"]["names"]["box"] is None
+    assert "<i>On the pole</i> Phytoplex</span>" in client.get("/").data.decode()
+
+
+def test_version_names_drop_a_zero_patch():
+    from src import version
+    assert version.short("1.4.0") == "1.4" and version.short("1.6.1") == "1.6.1"
+    assert version.short(None) is None
+    assert version.versions("1.6.0")["names"]["next_box"] is None   # nothing newer to wait for
 
 
 def test_minute_refresh_carries_the_tile_lines(client):

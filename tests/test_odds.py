@@ -425,3 +425,31 @@ def test_odds_job_end_to_end(fake):
     assert s["odds"]["words"] and "'lat'" not in str(s) and "28.71" not in str(s) and "77.77" not in str(s)
     o = ddata.odds()
     assert o["available"] and len(o["chart"]["p"]) == 72 and o["season"]["points"]
+
+
+def test_auto_refetches_a_forecast_saved_without_its_runs(fake):
+    """A Pi updated from older code has a fresh forecast but no ensemble
+    runs. The hourly job must fetch it again, not fail the odds for hours."""
+    from scripts import update_feeds as uf
+    assert uf.main(["x", "all"]) == 0
+    fake.feeds.delete_one({"_id": "forecast_members"})
+    fake.feeds.delete_one({"_id": "odds"})
+    uf.main(["x", "auto"])
+    status = fake.feeds.find_one({"_id": "status"})
+    assert "error" not in status["odds"], status["odds"].get("error")
+    assert fake.feeds.find_one({"_id": "forecast_members"})
+    assert fake.feeds.find_one({"_id": "odds"})
+
+
+def test_odds_still_run_when_the_ensemble_is_down(fake, monkeypatch):
+    from scripts import update_feeds as uf
+    from src.feeds import sources
+
+    def down(*a, **kw):
+        raise RuntimeError("ensemble server unreachable")
+    monkeypatch.setattr(sources, "ensemble", down)
+    uf.main(["x", "all"])
+    status = fake.feeds.find_one({"_id": "status"})
+    assert "error" not in status["forecast"] and "error" not in status["odds"], \
+        (status["forecast"].get("error"), status["odds"].get("error"))
+    assert fake.feeds.find_one({"_id": "odds"})["inputs"]["members"] == 1

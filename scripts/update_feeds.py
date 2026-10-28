@@ -131,7 +131,13 @@ def station_hours(d, since, until=None, centred=False):
 def run_forecast(d):
     lat, lon = field_point()
     now = now_utc().replace(minute=0, second=0, microsecond=0)
-    members = sources.ensemble(lat, lon)
+    # The ensemble is what the odds prefer; if its server is down the single
+    # forecast still gets saved, and the odds run on that instead of not at all.
+    try:
+        members = sources.ensemble(lat, lon)
+    except Exception as exc:
+        log(f"forecast: ensemble feed failed ({exc}); saving the single forecast only")
+        members = []
     try:
         det_rows = sources.forecast(lat, lon)
         det_source = "Open-Meteo best-match forecast"
@@ -1107,6 +1113,11 @@ def main(argv):
             last = aware((status.get(name) or {}).get("last_ok"))
             if last is None or now_utc() - last >= timedelta(hours=max_age):
                 todo.append(name)
+        # The odds read every run of the forecast (forecast_members). A
+        # forecast saved by code from before that existed looks fresh but has
+        # none, so fetch it again now instead of failing the odds for hours.
+        if "forecast" not in todo and not d.feeds.find_one({"_id": "forecast_members"}, {"_id": 1}):
+            todo.insert(0, "forecast")
     else:
         sys.exit(f"unknown mode {mode!r}. Use auto, all, or one of: {', '.join(JOBS)}")
 

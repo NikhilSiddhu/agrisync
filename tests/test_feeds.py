@@ -390,10 +390,13 @@ def test_auto_skips_feeds_that_are_fresh(fake, monkeypatch):
 def test_one_failing_feed_does_not_stop_the_others(fake, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("no internet")
+    # Both forecast servers down: the forecast job fails (one of them alone
+    # does not stop it; see test_odds_still_run_when_the_ensemble_is_down).
     monkeypatch.setattr(sources, "ensemble", boom)
+    monkeypatch.setattr(sources, "forecast", boom)
     uf.main(["x", "all"])
     status = fake.feeds.find_one({"_id": "status"})
-    assert "no internet" in status["forecast"]["error"]
+    assert "no forecast hours came back" in status["forecast"]["error"]
     assert "error" not in status["satellite"]
     assert ddata.satellite()["available"]
 

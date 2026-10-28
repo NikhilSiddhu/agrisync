@@ -8,9 +8,14 @@ Run every 15 minutes by agrisync-watchdog.timer, or by hand:
 Alerts only on STATE CHANGE, never repeatedly. A box that has been down for
 three days sends one message, not 288. That is the difference between an
 alert you act on and an alert you mute.
+
+A new kind of problem is a change too. A box can sit at "degraded" for weeks
+with a known fault (the rain plate, until it is replaced); a second fault
+arriving then still sends a message, and the known one never repeats.
 """
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,6 +43,37 @@ def save_state(state):
         STATE_FILE.write_text(json.dumps(state, indent=2))
     except Exception as exc:
         print(f"warning: could not write state file: {exc}", file=sys.stderr)
+
+
+def problem_key(text):
+    """The kind of problem, without its numbers: "rain counter reads
+    64,663,617: ..." and "rain counter reads 64,700,002: ..." are one problem."""
+    return re.sub(r"\d[\d,.]*", "#", text)
+
+
+def _was(entry):
+    """(status, problem keys) from the state file. Files written before
+    problems were kept hold only the status; their problems are unknown."""
+    if isinstance(entry, dict):
+        return entry.get("status"), set(entry.get("problems") or [])
+    return entry, None
+
+
+def changes_since(previous, devices):
+    """-> (state to save, changes). A change is a new status or, at the same
+    bad status, a problem not seen before: (device, was, now, problems)."""
+    current, changes = {}, []
+    for dev in devices:
+        did, status, problems = dev["device_id"], dev["status"], dev["problems"]
+        current[did] = {"status": status, "problems": sorted({problem_key(p) for p in problems})}
+        was, seen = _was(previous.get(did))
+        if was != status:
+            changes.append((did, was, status, problems))
+        elif status != STATUS_OK and seen is not None:
+            new = [p for p in problems if problem_key(p) not in seen]
+            if new:
+                changes.append((did, was, status, new))
+    return current, changes
 
 
 def send_webhook(title, message):
@@ -103,8 +139,7 @@ def main():
         return 0
 
     previous = load_state()
-    current = {}
-    changes = []
+    current, changes = changes_since(previous, devices)
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"AgriSync device check  {stamp}")
@@ -113,17 +148,12 @@ def main():
     for dev in devices:
         did = dev["device_id"]
         status = dev["status"]
-        current[did] = status
 
         marker = "OK " if status == STATUS_OK else "!! "
         print(f"{marker}{did:<22} {status:<10} "
               f"last seen {dev.get('minutes_since_last_reading', '?')} min ago")
         for problem in dev["problems"]:
             print(f"      - {problem}")
-
-        was = previous.get(did)
-        if was != status:
-            changes.append((did, was, status, dev["problems"]))
 
     save_state(current)
 
@@ -135,6 +165,9 @@ def main():
     for did, was, status, problems in changes:
         if status == STATUS_OK:
             lines.append(f"RECOVERED: {did} is reporting normally again")
+        elif was == status:
+            lines.append(f"{did}: still {status}, and a new problem")
+            lines.extend(f"  - {p}" for p in problems)
         else:
             lines.append(f"{did}: {was or 'unknown'} -> {status}")
             lines.extend(f"  - {p}" for p in problems)
