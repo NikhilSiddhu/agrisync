@@ -92,16 +92,16 @@ def test_shows_current_conditions(client):
 def test_uses_the_main_site_design_tokens(client):
     """If these drift, the dashboard stops looking like agrisync.tech."""
     body = client.get("/").data
-    for token in (b"--paper:#f4f2ec", b"--green:#3f5e39", b"--moss:#5c7340",
-                  b"Instrument+Serif", b"--maxw:1080px"):
+    for token in (b"--paper:#f4f2ec", b"--ink:#0e1b12", b"--leaf:#3f5e39", b"--night:#0b160f",
+                  b"Instrument+Serif", b"Instrument+Sans", b"DM+Mono"):
         assert token in body
 
 
-def test_nav_points_at_the_real_anchors(client):
+def test_nav_points_at_the_dashboards_own_sections_and_home(client):
     body = client.get("/").data
-    for anchor in (b"agrisync.tech/#what", b"agrisync.tech/#how",
-                   b"agrisync.tech/#engine", b"agrisync.tech/#about",
-                   b"agrisync.tech/#stack", b"agrisync.tech/#connect"):
+    for anchor in (b'href="#odds"', b'href="#field"', b'href="#season"', b'href="#orbit"',
+                   b'href="#checks"', b'href="#camera"', b'href="#record"',
+                   b'href="https://agrisync.tech"', b"agrisync.tech/#how"):
         assert anchor in body
 
 
@@ -120,12 +120,13 @@ def test_links_back_to_the_main_site_for_the_explanation(client):
 
 
 def test_offers_the_authenticated_route_for_more(client):
-    """More than the public week is behind sign-in: the Connect button, and
+    """More than the public week is behind sign-in: the sign-in slot, and
     path links (never a hostname) for the CSV and the photographs."""
     r = client.get("/")
-    assert b"Connect" in r.data
+    assert b"data-ag-auth" in r.data and b"Sign in" in r.data
     assert b"/export/readings.csv" in r.data
     assert b'data-ag-request="data"' in r.data
+    assert b'data-ag-request="photos"' in r.data
 
 
 def test_no_secrets_leak_into_the_page(client):
@@ -182,11 +183,12 @@ def test_survives_an_empty_database(monkeypatch):
     assert b"No data yet" in r.data or b"Waiting for the first reading" in r.data
 
 
-def test_background_layers_cannot_intercept_clicks(client):
-    """Fixed decorative layers must never sit in front of the content."""
+def test_fixed_layers_cannot_intercept_clicks(client):
+    """The one fixed decorative layer (the safe-area band above the header)
+    must never catch a tap meant for the page."""
     body = client.get("/").data.decode()
-    assert "pointer-events:none" in body
-    assert "z-index:-1" in body and "z-index:-2" in body
+    band = body[body.index("body::before"):body.index("}", body.index("body::before"))]
+    assert "pointer-events:none" in band
 
 
 def test_no_background_attachment_fixed(client):

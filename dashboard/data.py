@@ -160,11 +160,22 @@ def series(hours=MAX_PUBLIC_HOURS):
     minutes = bucket_minutes_for(hours)
     fmt = "%H:%M" if hours <= 48 else "%d %b %H:%M"
 
-    out = {"labels": [], "air": [], "humidity": [], "dew": [], "leaf": [], "wetness": []}
+    out = {"labels": [], "t": [], "air": [], "humidity": [], "dew": [], "leaf": [], "wetness": []}
     for r in bucketed(_db().readings, query, minutes):
         out["labels"].append(_local(r["bucket"]).strftime(fmt))
+        out["t"].append(_ms(r["bucket"]))      # epoch ms, so a gap in the record stays a gap on a time axis
         for key in ("air", "humidity", "dew", "leaf", "wetness"):
             out[key].append(r[key])
+    return out
+
+
+def spark(hours=24):
+    """The "Now" tiles' sparklines: the last day in hourly buckets, plus the
+    moment the window ends, so the line sits where the hours really were and
+    an hour Phytoplex did not send shows as a gap."""
+    out = series(hours)
+    out["hours"] = hours
+    out["now"] = _ms(datetime.now(timezone.utc))
     return out
 
 
@@ -583,7 +594,231 @@ def anomalies():
             "stale": (_age_hours(doc) or 0) > 3}
 
 
-FEED_NAMES = ("forecast", "reanalysis", "satellite", "radar", "anomaly", "check")
+def calibration_summary():
+    doc = _feed("calibration")
+    if not doc:
+        return {"available": False}
+    t = doc.get("levels") or {}
+    return {
+        "available": True, "ready": bool(doc.get("ready")),
+        "visits": doc.get("visits", 0), "judged": doc.get("judged", 0),
+        "positives": doc.get("positives", 0), "needs": doc.get("needs") or {},
+        "levels": [dict(level=lv, **(t.get(lv) or {"n": 0, "k": 0})) for lv in ("low", "rising", "high")],
+        "warning": doc.get("warning") or {},
+    }
+
+
+def _events(flags):
+    """Consecutive flagged hours of one variable -> one event each."""
+    names = {"st_temp": "Temperature", "st_dew": "Dew point"}
+    events = []
+    for f in sorted(flags, key=lambda x: (x["variable"], x["time"])):
+        t = f["time"] if f["time"].tzinfo else f["time"].replace(tzinfo=timezone.utc)
+        e = events[-1] if events else None
+        if e and e["variable"] == f["variable"] and t - e["_end"] <= timedelta(hours=1):
+            e["_end"] = t
+            e["hours"] += 1
+            if abs(f["z"]) > abs(e["z"]):
+                e["z"] = f["z"]
+            continue
+        events.append({"variable": f["variable"], "name": names.get(f["variable"], f["variable"]),
+                       "direction": f["direction"], "z": f["z"], "hours": 1, "_start": t, "_end": t})
+    for e in events:
+        s, en = _local(e.pop("_start")), _local(e.pop("_end") + timedelta(hours=1))
+        e["when"] = f"{s.strftime('%d %b, %H:%M')} to {en.strftime('%H:%M')}"
+    events.sort(key=lambda e: e["when"], reverse=True)
+    return events
+
+
+def baseline_summary():
+    doc = _feed("baseline")
+    if not doc:
+        return {"available": False}
+    m = doc.get("micro") or {}
+    tg = (m.get("targets") or {}).get("st_temp") or {}
+    until = doc.get("checked_until")
+    return {
+        "available": True, "state": doc.get("state", "learning"),
+        "trained_days": m.get("trained_days"), "micro_state": m.get("state"),
+        "r2": tg.get("r2"), "sigma": tg.get("sigma"),
+        "events": _events(m.get("flags") or [])[:3],
+        "checked_until": _local(until).strftime("%d %b") if until else None,
+        "ndvi": doc.get("ndvi") or {}, "radar": doc.get("radar") or {},
+    }
+
+
+def alerts_summary():
+    doc = _feed("alerts")
+    if not doc:
+        return {"available": False}
+    hist = []
+    for h in (doc.get("history") or [])[:5]:
+        hist.append({"when": _local(h["at"]).strftime("%d %b, %H:%M") if h.get("at") else "",
+                     "body": h.get("body", ""), "sent": bool(h.get("sent"))})
+    return {"available": True, "channel": bool(doc.get("channel")),
+            "active": doc.get("active") or [], "history": hist}
+
+
+LEVEL_OF = (lambda p: None if p is None else "high" if p > 0.66 else "rising" if p > 0.33 else "low")
+RANKS = {"low": 0, "rising": 1, "high": 2}
+
+
+def summary():
+    """The few live numbers agrisync.tech shows. Public, small, cached a minute."""
+    out = {"generated_at": datetime.now(timezone.utc).isoformat()}
+    l = latest()
+    if l:
+        try:
+            doc = _db().readings.find_one({"quality_flags": {"$exists": False}}, sort=[("ts", -1)]) or {}
+            t = _local(doc.get("ts"))
+        except Exception:
+            t = None
+        out["latest"] = {
+            "air_temp_c": l.get("air_temp_c"), "humidity_pct": l.get("humidity_pct"),
+            "dew_point_c": l.get("dew_point_c"),
+            "leaf_wet": (l.get("leaf_wetness") or 0) >= WET_THRESHOLD,
+            "observed_at": l.get("observed_at"), "age_minutes": l.get("age_minutes"),
+            "time": t.strftime("%I:%M %p").lstrip("0").lower() if t else None,
+            "online": l.get("online"),
+        }
+    r = risk()
+    levels = [LEVEL_OF(x.get("pressure")) for x in r.get("diseases", [])]
+    levels = [x for x in levels if x]
+    if levels:
+        out["now"] = {"level": max(levels, key=RANKS.get)}
+    elif l and l.get("online"):
+        out["now"] = {"level": "low"}       # no wet hours in the last day
+    fc = _feed("forecast")
+    if fc and fc.get("rows"):
+        ahead = [c.get("level") for row in fc["rows"] for c in row.get("cells", []) if c.get("level")]
+        if ahead:
+            out["ahead"] = {"level": max(ahead, key=RANKS.get),
+                            "wet_hours": sum(1 for h in fc.get("hourly") or [] if h.get("wet"))}
+    try:
+        optical = []
+        for p in _db().ndvi.find({"error": {"$exists": False}}, {"acquired": 1, "ndvi": 1,
+                                                                 "valid_px": 1, "total_px": 1}).sort("acquired", 1):
+            clear = p.get("ndvi") is not None and p.get("valid_px", 0) >= 0.6 * max(1, p.get("total_px", 1))
+            optical.append({"d": _local(p["acquired"]).strftime("%Y-%m-%d"),
+                            "ndvi": round(p["ndvi"], 3) if clear else None})
+        radar = [{"d": _local(p["acquired"]).strftime("%Y-%m-%d")}
+                 for p in ((_feed("radar") or {}).get("series") or [])]
+        if optical or radar:
+            out["orbit"] = {"optical": optical, "radar": radar}
+    except Exception:
+        pass
+    cal = calibration_summary()
+    if cal.get("available"):
+        out["calibration"] = {"ready": cal["ready"], "visits": cal["visits"], "judged": cal["judged"]}
+    base = baseline_summary()
+    if base.get("available"):
+        out["baseline"] = {"state": base["state"], "trained_days": base["trained_days"]}
+    try:
+        o = odds_public()
+    except Exception:
+        o = None
+    if o:
+        out["odds"] = o
+    return out
+
+
+# ------------------------------------------------------------------- odds
+
+def _day_label(iso):
+    try:
+        return datetime.fromisoformat(str(iso)[:10]).strftime("%a %-d %b")
+    except ValueError:
+        return str(iso)
+
+
+def odds():
+    """The odds engine's latest run (scripts/update_feeds.py run_odds)."""
+    doc = _feed("odds")
+    if not doc or not doc.get("now"):
+        return {"available": False}
+    age = _age_hours(doc)
+    hourly = doc.get("hourly") or []
+    season = doc.get("season") or []
+    sp = doc.get("spell")
+    cal = doc.get("calibration") or {}
+    ctx = doc.get("context") or {}
+    inputs = doc.get("inputs") or {}
+    windows = [{"hours": w["hours"], "p": w["p"], "lo": w["lo"], "hi": w["hi"],
+                "level": w.get("level"), "wet_h": w.get("wet_h"),
+                "wet_lo": w.get("wet_h_lo"), "wet_hi": w.get("wet_h_hi"),
+                "members_high": w.get("members_high"), "groups": w.get("groups") or {}}
+               for w in doc.get("windows") or []]
+    shares = (doc.get("windows") or [{}])[0].get("share") or {}
+    from src.ml.pathogens import GROUP_NAMES
+    groups = sorted(({"key": k, "name": GROUP_NAMES.get(k, k), "share": v,
+                      "p": windows[0]["groups"].get(k) if windows else None}
+                     for k, v in shares.items()), key=lambda g: -(g["share"] or 0))
+    return {
+        "available": True, "stale": age is not None and age > 3,
+        "updated": _local(doc["generated_at"]).strftime("%d %b, %H:%M"),
+        "now": doc["now"], "windows": windows, "groups": groups,
+        "top_name": doc.get("top_name"), "drivers": doc.get("drivers") or [],
+        "spell": ({"from": _local(sp["from"]).strftime("%a %-I %p"),
+                   "to": _local(sp["to"]).strftime("%-I %p"),
+                   "hours": sp.get("hours"), "temp": sp.get("temp")} if sp else None),
+        "incubating": [dict(e, show_from_label=_day_label(e["show_from"]),
+                            show_to_label=_day_label(e["show_to"])) for e in doc.get("incubating") or []],
+        "calibration": cal, "context": ctx, "inputs": inputs,
+        "chart": {
+            "labels": [_local(h["time"]).strftime("%a %H:%M") for h in hourly],
+            "times": [_ms(h["time"]) for h in hourly],
+            "p": [h["p"] for h in hourly], "lo": [h["lo"] for h in hourly],
+            "hi": [h["hi"] for h in hourly], "wet": [h.get("wet") for h in hourly],
+        },
+        "season": {
+            "points": [{"x": _ms(datetime.fromisoformat(r["date"]).replace(tzinfo=timezone.utc)),
+                        "p": r["p"], "lo": r["lo"], "hi": r["hi"], "wet_h": r.get("wet_h"),
+                        "measured": r.get("measured")} for r in season],
+            "range": _season_axis(),
+        },
+    }
+
+
+def mos_skill():
+    """How much the field correction helped on hours it never trained on."""
+    m = _feed("mos") or {}
+    t, dw, wet = m.get("temp") or {}, m.get("dew") or {}, m.get("wet") or {}
+    if t.get("state") not in ("on", "off") and dw.get("state") not in ("on", "off"):
+        return None
+    return {"temp_raw": t.get("rmse_raw"), "temp_cor": t.get("rmse_corrected") if t.get("use") else t.get("rmse_raw"),
+            "dew_raw": dw.get("rmse_raw"), "dew_cor": dw.get("rmse_corrected") if dw.get("use") else dw.get("rmse_raw"),
+            "temp_on": bool(t.get("use")), "dew_on": bool(dw.get("use")),
+            "hours": dw.get("holdout_hours") or t.get("holdout_hours"), "pairs": m.get("pairs"),
+            "wet_raw": wet.get("mae_raw"), "wet_cor": wet.get("mae_corrected"), "wet_days": wet.get("days")}
+
+
+def odds_public():
+    """What agrisync.tech shows: the headline, never the field's location."""
+    o = odds()
+    if not o.get("available"):
+        return None
+    inc = o["incubating"][:2]
+    cal = o["calibration"]
+    doc = _feed("odds") or {}
+    season = [{"d": r["date"], "p": r["p"], "m": r.get("measured")} for r in doc.get("season") or []]
+    skill = mos_skill()
+    return {
+        "p": o["now"]["p"], "lo": o["now"]["lo"], "hi": o["now"]["hi"],
+        "level": o["now"]["level"], "words": o["now"]["words"],
+        "windows": [{"hours": w["hours"], "p": w["p"], "lo": w["lo"], "hi": w["hi"]} for w in o["windows"]],
+        "top": o["top_name"], "drivers": o["drivers"][:3],
+        "incubating": [{"name": e["name"], "p": e["p"], "from": e["show_from_label"],
+                        "to": e["show_to_label"]} for e in inc],
+        "checked": bool(cal.get("checked")), "visits": cal.get("visits", 0),
+        "climate": (o["context"] or {}).get("climate"),
+        "season_rank_pct": (o["context"] or {}).get("season_rank_pct"),
+        "season": season, "skill": skill,
+        "updated": o["updated"], "stale": o["stale"],
+    }
+
+
+FEED_NAMES = ("forecast", "reanalysis", "satellite", "radar", "anomaly", "check",
+              "calibration", "baseline", "mos", "climate", "odds", "alerts")
 
 
 def feed_health():

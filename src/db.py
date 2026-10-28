@@ -22,6 +22,9 @@ def init_db(app):
     try:
         _db.readings.create_index([("device_id", ASCENDING), ("ts", DESCENDING)])
         _db.readings.create_index([("ts", DESCENDING)])
+        # Finds a re-sent reading, and the reference for one queued before
+        # the board's clock was set (src/api/sensors.py).
+        _db.readings.create_index([("device_id", ASCENDING), ("boot", ASCENDING), ("up_s", ASCENDING)])
         app.logger.info("mongo indexes ready")
     except Exception as exc:  # Mongo down at boot - not fatal
         app.logger.warning("could not create indexes yet: %s", exc)

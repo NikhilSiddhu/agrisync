@@ -1,6 +1,6 @@
 # What the system is
 
-A field box that measures the microclimate a cabbage leaf actually experiences,
+Phytoplex, the AgriSync field unit, measures the microclimate a cabbage leaf actually experiences,
 and turns it into a disease infection pressure estimate.
 
 ## The chain
@@ -22,7 +22,7 @@ surface drops to or below the dew point of the surrounding air. Air temperature 
 cannot tell you that, because a leaf radiating heat to a clear night sky can sit
 several degrees below the air around it.
 
-So the box measures air temperature and humidity (BME280) to get the dew point, and
+So Phytoplex measures air temperature and humidity (BME280) to get the dew point, and
 leaf surface temperature (MLX90614) with an infrared sensor that does not touch the
 leaf. The gap between them is the signal.
 

@@ -120,6 +120,9 @@ def create_app():
                 "latest": data.latest(),
                 "stats": data.stats(hours),
                 "series": data.series(hours),
+                # The "Now" tiles always draw the last 24 hours, whatever
+                # range the charts below are showing.
+                "spark": data.spark(24),
                 "wet": data.wet_hours(hours),
                 "risk": data.risk(),
                 "deeper": data.deeper_access(),
@@ -137,11 +140,14 @@ def create_app():
                 "check": data.disease_or_stress(),
                 "anom": data.anomalies(),
                 "fieldlog": data.field_log_summary(),
+                "odds": data.odds(),
+                "skill": data.mos_skill(),
+                "feeds": data.feed_health() or {},
             })
         except Exception as exc:
             app.logger.warning("dashboard degraded: %s", exc)
             payload = {
-                "site": data.site(), "latest": None, "stats": {}, "series": {},
+                "site": data.site(), "latest": None, "stats": {}, "series": {}, "spark": {},
                 "wet": {"available": False}, "risk": {"available": False},
                 "deeper": data.deeper_access(), "hours": hours, "db_ok": False,
                 "forecast": {"available": False}, "compare": {"available": False},
@@ -149,6 +155,7 @@ def create_app():
                 "radar": {"available": False}, "optical_gaps": None,
                 "check": {"available": False},
                 "fieldlog": {"count": 0, "last": None},
+                "odds": {"available": False}, "skill": None, "feeds": {},
             }
 
         # ---- members only -------------------------------------------------
@@ -211,6 +218,9 @@ def create_app():
 
         resp = app.make_response(render_template("index.html", **payload))
         resp.headers["Cache-Control"] = cache
+        # One URL, two views: a cache must never hand the public version to a
+        # signed-in visitor, or the members' one to anyone else.
+        resp.headers["Vary"] = "Cookie"
         return resp
 
     @app.get("/data.json")
@@ -240,12 +250,24 @@ def create_app():
             return jsonify({"error": "data unavailable",
                             "detail": str(exc)[:120]}), 503
 
-    # agrisync.tech is static on GitHub Pages and reads this to show live
-    # readings. Listed origins, not a wildcard - this endpoint carries no
+    @app.get("/summary.json")
+    def summary_json():
+        """The handful of live numbers agrisync.tech shows: its headline, the
+        season's satellite passes, and how far calibration has got."""
+        try:
+            resp = jsonify(data.summary())
+            resp.headers["Cache-Control"] = "public, max-age=60"
+            return resp
+        except Exception as exc:
+            app.logger.warning("summary unavailable: %s", exc)
+            return jsonify({"error": "summary unavailable"}), 503
+
+    # agrisync.tech is static on GitHub Pages and reads these to show live
+    # readings. Listed origins, not a wildcard - these endpoints carry no
     # credentials, but a wildcard is a habit worth not forming.
     @app.after_request
     def data_cors(resp):
-        if request.path == "/data.json":
+        if request.path in ("/data.json", "/summary.json"):
             origin = (request.headers.get("Origin") or "").rstrip("/")
             if origin in ("https://agrisync.tech", "https://www.agrisync.tech"):
                 resp.headers["Access-Control-Allow-Origin"] = origin

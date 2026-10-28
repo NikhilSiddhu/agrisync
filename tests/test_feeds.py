@@ -254,9 +254,37 @@ def fake(monkeypatch):
         return [{"time": now - timedelta(hours=9) + timedelta(hours=i), "temp_c": temp,
                  "rh_pct": rh, "dew_c": dew, "precip_mm": 0.0} for i in range(96)]
 
-    monkeypatch.setattr(sources, "forecast", lambda lat, lon: fc(96, 18.0, 98, 17.8))
-    monkeypatch.setattr(sources, "ensemble", lambda lat, lon: [fc(96, 18.0, 98, 17.8),
-                                                               fc(96, 30.0, 40, 15.0)])
+    monkeypatch.setattr(sources, "forecast", lambda lat, lon, **kw: fc(96, 18.0, 98, 17.8))
+    monkeypatch.setattr(sources, "ensemble", lambda lat, lon, **kw: [fc(96, 18.0, 98, 17.8),
+                                                                     fc(96, 30.0, 40, 15.0)])
+
+    def hourly_readings():
+        return [doc for doc in db.readings.find({"ts": {"$gte": start}}) if doc["ts"].minute == 0]
+
+    def sun(ts):
+        lh = (ts.hour + 5.5) % 24
+        return max(0.0, 700.0 * math.sin((lh - 6) / 12 * math.pi)) if 6 <= lh <= 18 else 0.0
+
+    monkeypatch.setattr(sources, "previous_runs", lambda lat, lon, s, e, day=1: [
+        {"time": doc["ts"].replace(tzinfo=timezone.utc), "temp_c": doc["air_temp_c"] - 0.8,
+         "dew_c": doc["dew_point_c"] - 1.0, "rh_pct": doc["humidity_pct"] - 4, "cloud_pct": 30.0,
+         "wind_ms": 2.0, "sw_wm2": sun(doc["ts"]), "precip_mm": 0.0} for doc in hourly_readings()])
+    monkeypatch.setattr(sources, "era5_drivers", lambda lat, lon, s, e: [
+        {"time": doc["ts"].replace(tzinfo=timezone.utc), "precip_mm": 0.0, "wind_ms": 2.0,
+         "cloud_pct": 30.0, "sw_wm2": sun(doc["ts"])} for doc in hourly_readings()])
+
+    def history(lat, lon, s, e):
+        t0 = datetime.combine(s, datetime.min.time(), tzinfo=timezone.utc)
+        out = []
+        for i in range(24 * 75):
+            ts = t0 + timedelta(hours=i)
+            lh = (ts.hour + 5.5) % 24
+            air = 26.0 + 6.0 * math.cos((lh - 15) / 24 * 2 * math.pi)
+            out.append({"time": ts, "temp_c": air, "rh_pct": 80.0, "dew_c": air - 3.0 + (2.5 if lh < 6 else 0),
+                        "precip_mm": 0.0, "wind_ms": 1.5, "cloud_pct": 20.0, "sw_wm2": sun(ts.replace(tzinfo=None))})
+        return out
+    monkeypatch.setattr(sources, "era5_history", history)
+    monkeypatch.setattr(uf, "CLIMATE_YEARS", 2)
 
     def era(lat, lon, s, e):
         out = []
@@ -354,7 +382,9 @@ def test_auto_skips_feeds_that_are_fresh(fake, monkeypatch):
     for name in uf.JOBS:
         monkeypatch.setitem(uf.JOBS, name, lambda d, n=name: ran.append(n))
     uf.main(["x", "auto"])
-    assert ran == ["anomaly"]
+    hourly = [n for n, age in uf.MAX_AGE_H.items() if age == 0]
+    assert "anomaly" in hourly and "forecast" not in hourly
+    assert ran == hourly
 
 
 def test_one_failing_feed_does_not_stop_the_others(fake, monkeypatch):
@@ -372,10 +402,12 @@ def test_page_shows_the_new_sections(fake):
     uf.main(["x", "all"])
     from dashboard.app import create_app
     body = create_app().test_client().get("/").data
-    for text in (b"Pressure, <span class=\"serif\">forecast.", b"fc-table", b"c-ndvi", b"c-rvi",
-                 b"The field, <span class=\"serif\">from space.", b"c-cmp-t",
-                 b"Disease, or just stress?", b"NASA POWER",
-                 b"The sensors, <span class=\"serif\">checked.", b"not a chance of infection"):
+    for text in (b'<span class="caps">Today\'s</span> <span class="ital">odds.</span>', b"c-odds",
+                 b'id="season-strip"', b"c-ndvi", b"c-rvi",
+                 b'<span class="caps">The field,</span> <span class="ital">from space.</span>', b"c-cmp-t",
+                 b"Disease, or just stress?", b"NASA POWER", b"Already in the leaves?",
+                 b'<span class="caps">The numbers,</span> <span class="ital">checked.</span>',
+                 b"not a prediction"):
         assert text in body, text
     assert b"built-in method" not in body          # a dict method leaking into the page
 
@@ -397,6 +429,6 @@ def test_data_json_says_how_fresh_each_feed_is(fake, monkeypatch):
 def test_page_still_renders_before_any_feed_has_run(fake):
     from dashboard.app import create_app
     body = create_app().test_client().get("/").data
-    assert b"The forecast has not run yet." in body
+    assert b"The odds have not run yet." in body
     assert b"No satellite passes processed yet." in body
     assert b"The comparison has not run yet." in body

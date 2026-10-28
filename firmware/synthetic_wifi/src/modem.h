@@ -468,6 +468,10 @@ public:
     return status;
   }
 
+  /* True once NTP has set the modem's clock this power-up. Only then is its
+     time worth copying to the board (main.cpp adoptModemClock). */
+  bool timeSynced() const { return _timeSynced; }
+
   void sleep() { at("AT+CSCLK=1", 2000); }
   void wake()  { at("AT+CSCLK=0", 2000); }
 

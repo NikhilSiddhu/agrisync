@@ -20,6 +20,7 @@ DISEASES = [
     ("alternaria", "Alternaria leaf spot"),
     ("downy_mildew", "Downy mildew"),
     ("black_rot", "Black rot"),
+    ("sclerotinia", "White mould (Sclerotinia)"),
     ("other", "Something else (say what in the notes)"),
 ]
 STAGES = ["nursery", "transplanted", "vegetative", "head forming", "harvest"]

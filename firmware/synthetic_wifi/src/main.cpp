@@ -1,45 +1,66 @@
 /*
- * AgriSync Board A - ESP32 WROOM-32D sensor node   (firmware 1.1.0)
+ * AgriSync Board A - ESP32 WROOM-32D sensor node   (firmware 1.5.0)
  *
- * Reads the I2C bus, derives leaf wetness from dew point, POSTs JSON to the Pi.
+ * Reads the I2C bus, derives leaf wetness from dew point, POSTs JSON home.
  *
- * What 1.1.0 added, and why:
+ * What 1.5.0 changed, and why. The field data from August to October 2026
+ * showed the queue of unsent readings only ever growing, 3,340 of them by
+ * 22 October, including the whole week of 3 to 10 October:
  *
- *  STORE AND FORWARD    A failed POST used to vanish. Now it is appended to
- *                       LittleFS and retried when the link returns. A router
- *                       outage during a wet night no longer deletes exactly
- *                       the hours you care about.
+ *  THE QUEUE DRAINS ON CELLULAR   1.4.0 only flushed when WiFi was connected,
+ *                       and WiFi is switched off in the field, so nothing
+ *                       queued was ever re-sent. It now drains whenever the
+ *                       link is up, whichever link that is.
  *
- *  NTP TIME             Buffered readings are useless without knowing when
- *                       they were taken. The board syncs to NTP over WiFi and
- *                       stamps each reading, so a backfilled row lands at its
- *                       real time rather than the time it was flushed.
+ *  THE BOARD KNOWS THE TIME       1.4.0 set the modem's clock from NTP and
+ *                       never copied it to the board, so queued readings
+ *                       carried no time and could only be stamped on
+ *                       arrival. The board clock is now set from the modem
+ *                       after its NTP sync, and every reading says when it
+ *                       was taken.
  *
- *  EMISSIVITY           The MLX90614 assumes emissivity 1.0. Leaves are around
- *                       0.96. Uncorrected, leaf temperature is biased by up to
- *                       a degree or so - and the entire wetness scale is only
- *                       2 C wide, so that bias moves wetness by up to 50 points
- *                       on every reading. Corrected here.
+ *  NOTHING IS COPIED TO DRAIN     1.4.0 rewrote the whole buffer to drop the
+ *                       lines it had sent, which needs as much free flash as
+ *                       the buffer itself. The queue is now a row of small
+ *                       segment files and a read cursor; a segment is
+ *                       deleted once it is sent.
  *
- *  LED FAULT CODES      You can diagnose the box from the ground without a
- *                       laptop. Count the blinks.
+ *  EVERY READING IS NAMED         boot counts power-ups and up_s is seconds
+ *                       since this one. The server uses the pair to store a
+ *                       re-sent reading once, and to place one taken before
+ *                       the clock was set.
  *
- *  SENSOR REPORTING     Each payload says which sensors answered on the bus,
- *                       so the Pi can alert you when one drops off instead of
- *                       the data quietly getting thinner.
+ *  A LEAF WETNESS SENSOR          Optional, on ADS1115 A0, sent as raw
+ *                       millivolts (-DLEAF_WET_SENSOR=1). The server turns
+ *                       them into wetness once it knows what dry and wet read.
+ *
+ *  1.4.0's BUFFER IS KEPT ASIDE   Its readings have no time. Sending them now
+ *                       would file them at the wrong hour, so they move to
+ *                       /legacy.jsonl, are never sent, and come out with D
+ *                       for scripts/recover_buffer.py.
+ *
+ * Earlier: store and forward (1.1.0), NTP over WiFi, emissivity correction,
+ * LED fault codes, sensor presence in every payload.
  *
  * LED codes (GPIO2):
  *      solid on   everything healthy
  *      1 blink    WiFi down
  *      2 blinks   a core sensor is missing from the I2C bus
- *      3 blinks   cannot reach the API, readings are being buffered
- *      4 blinks   clock never synced, timestamps unreliable
+ *      3 blinks   cannot reach the API, readings are being queued
+ *      4 blinks   clock not set, readings carry no time
+ *
+ * Serial commands (115200):
+ *      D   print every queued and legacy reading. Deletes nothing.
+ *      C   ask to clear the queue; then Y within 10 s to do it
+ *      ?   status
+ *      T   cellular upload size sweep
  *
  * Pin map:
  *   SDA        GPIO21      BME280 + MLX90614 + ADS1115
  *   SCL        GPIO22
  *   Raindrop   AO GPIO35, DO GPIO32
  *   Battery    GPIO39 (47k/10k divider, needs -DUSE_BATTERY_ADC=1)
+ *   Leaf wet   ADS1115 A0, powered from LEAF_WET_POWER_PIN if set
  *   Status LED GPIO2
  */
 
@@ -49,19 +70,23 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <time.h>
+#include <sys/time.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 
 /* ── Transport ────────────────────────────────────────────────────────────
    0  SERIAL  tethered to the Pi over USB. scripts/serial_bridge.py forwards.
    1  WIFI    POST over WiFi. Bench only; will not reach the field.
-   2  CELL    A7670C over UART2, HTTPS to api.agrisync.tech through the tunnel.
+   2  CELL    A7670C over UART2, HTTP to ingest.agrisync.tech through the
+              tunnel, every request HMAC-signed.
 
    Set with -DTRANSPORT=2 in platformio.ini.
 
-   In CELL mode every reading is written to flash first and only removed once
-   the server has confirmed it. A dropped connection, a dead SIM or an unpaid
-   bill costs you nothing but a delay. Roughly 26 days of storage at a
-   5-minute interval, so the box survives a fortnight of you not visiting.
+   In WIFI and CELL mode a reading that cannot be sent is queued in flash
+   and sent oldest first once the link is back. About two weeks of
+   five-minute readings fit; past that the oldest day goes first.
    ──────────────────────────────────────────────────────────────────────── */
 #define TRANSPORT_SERIAL 0
 #define TRANSPORT_WIFI   1
@@ -75,6 +100,13 @@
 #define USE_WIFI_POST (TRANSPORT == TRANSPORT_WIFI)
 #define USE_CELL      (TRANSPORT == TRANSPORT_CELL)
 #define NETWORKED     (USE_WIFI_POST || USE_CELL)
+
+#ifndef LEAF_WET_SENSOR
+#define LEAF_WET_SENSOR 0
+#endif
+#ifndef LEAF_WET_POWER_PIN
+#define LEAF_WET_POWER_PIN -1
+#endif
 
 #include <Adafruit_BME280.h>
 #include <Adafruit_MLX90614.h>
@@ -111,15 +143,11 @@ static const int  POST_RETRIES        = 3;
 static const int  POST_RETRY_DELAY_MS = 2500;
 static const unsigned long BOOT_SETTLE_MS = 3000;
 
-// ---------- buffer ----------
-static const char *BUFFER_PATH = "/buf.jsonl";
-static const char *TEMP_PATH   = "/buf.tmp";
+// ---------- clock ----------
 #if USE_CELL
-static const size_t MAX_BUFFER_BYTES = 1400000;   // ~7000 readings, ~26 days
-#else
-static const size_t MAX_BUFFER_BYTES = 220000;    // ~1100 readings
+static const unsigned long CLOCK_COPY_MS  = 3600UL * 1000UL;   // re-copy hourly once set
+static const unsigned long CLOCK_RETRY_MS = 600UL * 1000UL;    // retry NTP every 10 min until set
 #endif
-static const int    MAX_FLUSH_PER_LOOP = 20;     // do not stall the cycle
 
 // ---------- leaf wetness model ----------
 // MUST stay in sync with src/ml/wetness.py on the Pi.
@@ -149,7 +177,20 @@ volatile unsigned long rainTips = 0;
 unsigned long lastPost = 0;
 Fault currentFault = FAULT_NONE;
 
-void IRAM_ATTR onRainTip() { rainTips++; }
+uint32_t bootCount = 0;
+bool firstReading = true;
+
+#include "queue.h"
+
+/* Between queued sends: keep the camera link answered, so a photograph
+   arriving mid-drain is not left waiting for a minute. */
+void queueIdle() {
+#if USE_CELL
+  photoReceiverService(modem, CELL_HOST, HMAC_SECRET, cellReady);
+#endif
+}
+
+void IRAM_ATTR onRainTip() { rainTips = rainTips + 1; }
 
 // ============================ helpers ============================
 
@@ -185,9 +226,7 @@ float leafWetnessIndex(float leafTempC, float dewPt) {
  * reflecting cold sky, not the sensor body - so this reduces the error
  * rather than eliminating it. Honest and better than ignoring it.
  *
- * The alternative is writing 0x96 to the sensor's emissivity register, which
- * is permanent and harder to undo. Doing it in software keeps the raw value
- * available: both are sent, so you can re-derive either later.
+ * Both values are sent, so the server can re-derive either later.
  */
 float correctForEmissivity(float measuredC, float ambientC) {
   const double e = (double)LEAF_EMISSIVITY;
@@ -201,6 +240,34 @@ float correctForEmissivity(float measuredC, float ambientC) {
   if (numerator <= 0) return measuredC;           // would take a root of a negative
 
   return (float)(pow(numerator / e, 0.25) - K);
+}
+
+/* Seconds since this power-up, from the 64-bit timer: no 49-day wrap. */
+static uint32_t upSeconds() { return (uint32_t)(esp_timer_get_time() / 1000000ULL); }
+
+static const char *resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_BROWNOUT:  return "brownout";
+    case ESP_RST_PANIC:     return "panic";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:       return "watchdog";
+    case ESP_RST_SW:        return "software";
+    case ESP_RST_DEEPSLEEP: return "deep-sleep";
+    case ESP_RST_EXT:       return "external";
+    default:                return "other";
+  }
+}
+
+/* Count power-ups in NVS, so every reading can say which one it came from. */
+static void countBoot() {
+  Preferences p;
+  if (p.begin("agrisync", false)) {
+    bootCount = p.getUInt("boot", 0) + 1;
+    p.putUInt("boot", bootCount);
+    p.end();
+  }
 }
 
 // ============================ status LED ============================
@@ -235,6 +302,7 @@ void updateFault() {
 #if USE_CELL
   if (!cellReady)                                 currentFault = FAULT_API;
   else if (!haveBME || !haveMLX || !haveADS)      currentFault = FAULT_SENSOR;
+  else if (!clockSynced)                          currentFault = FAULT_CLOCK;
   else                                            currentFault = FAULT_NONE;
 #elif USE_WIFI_POST
   if (WiFi.status() != WL_CONNECTED)              currentFault = FAULT_WIFI;
@@ -243,6 +311,17 @@ void updateFault() {
   else                                            currentFault = FAULT_NONE;
 #else
   currentFault = (!haveBME || !haveMLX || !haveADS) ? FAULT_SENSOR : FAULT_NONE;
+#endif
+}
+
+/* Is there a way home right now? The queue drains only when there is. */
+bool linkUp() {
+#if USE_CELL
+  return cellReady;
+#elif USE_WIFI_POST
+  return WiFi.status() == WL_CONNECTED;
+#else
+  return false;
 #endif
 }
 
@@ -265,12 +344,11 @@ void connectWiFi() {
     // Modem sleep parks the radio between transmissions to save power, but it
     // costs 20-25% packet loss and latency spikes to 400ms+. That showed up as
     // failed POSTs and NTP timeouts that looked like firewall problems.
-    // Roughly 3.6 Wh/day extra out of a ~40 Wh/day solar budget. Worth it.
     WiFi.setSleep(false);
     Serial.printf("[wifi] connected, ip %s rssi %d\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
   } else {
-    Serial.println("[wifi] FAILED - readings will be buffered to flash");
+    Serial.println("[wifi] FAILED - readings will be queued in flash");
   }
 }
 
@@ -278,8 +356,7 @@ void syncClock() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   // The Pi first. It is on the same LAN, needs no DNS, and works with the
-  // internet down - which is the whole point for a field box. Public servers
-  // are the fallback, and many home routers block or intercept them anyway.
+  // internet down. Public servers are the fallback.
   configTime(0, 0, PI_HOST, "pool.ntp.org", "time.google.com");
   Serial.printf("[time] syncing via %s", PI_HOST);
 
@@ -293,10 +370,40 @@ void syncClock() {
     Serial.print(".");
     delay(500);
   }
-  Serial.println(" FAILED - timestamps will fall back to the server's clock");
+  Serial.println(" FAILED - readings will carry no time until it works");
   Serial.println("  -> is chrony running on the Pi and allowing your subnet?");
-  Serial.println("     sudo systemctl status chrony ; chronyc clients");
 }
+
+#if USE_CELL
+/*
+ * Copy the modem's clock to the board.
+ *
+ * The modem keeps UTC from its own NTP sync (modem.syncTime), which is what
+ * signs every upload. 1.4.0 never passed that time on, so the board stamped
+ * nothing and a queued reading arrived days later with no idea when it was
+ * taken. Only a clock the modem actually set from NTP this power-up is
+ * trusted: a modem clock can be plausible and still hours out.
+ */
+void adoptModemClock() {
+  static unsigned long lastTry = 0;
+  if (!cellReady) return;
+  unsigned long every = clockSynced ? CLOCK_COPY_MS : CLOCK_RETRY_MS;
+  if (lastTry != 0 && millis() - lastTry < every) return;
+  lastTry = millis();
+
+  long t = modem.syncTime();          // NTP once per power-up, then a clock read
+  if (t > 1700000000L && modem.timeSynced()) {
+    struct timeval tv;
+    tv.tv_sec = (time_t)t;
+    tv.tv_usec = 0;
+    settimeofday(&tv, nullptr);
+    if (!clockSynced) Serial.printf("[time] board clock set from the modem, epoch %ld\n", t);
+    clockSynced = true;
+  } else if (!clockSynced) {
+    Serial.println("[time] modem has no NTP time yet - readings carry boot and uptime only");
+  }
+}
+#endif
 
 // ============================ i2c ============================
 
@@ -334,140 +441,73 @@ void setupSensors() {
     Serial.printf("MLX90614 OK @ 0x5A (correcting for emissivity %.2f)\n",
                   (double)LEAF_EMISSIVITY);
   } else {
-    Serial.println("MLX90614 not found - leaf_wetness will be absent (Stage B)");
+    Serial.println("MLX90614 not found - leaf temperature will be absent");
   }
 
   if (ads.begin(0x48, &Wire)) {
     haveADS = true;
-    ads.setGain(GAIN_ONE);
+    ads.setGain(GAIN_ONE);              // +-4.096 V, 0.125 mV a count
     Serial.println("ADS1115 OK @ 0x48");
   } else {
-    Serial.println("ADS1115 not found - analog front end unavailable (Stage B)");
-  }
-}
-
-// ============================ buffer ============================
-
-size_t bufferSize() {
-  if (!LittleFS.exists(BUFFER_PATH)) return 0;
-  File f = LittleFS.open(BUFFER_PATH, "r");
-  if (!f) return 0;
-  size_t n = f.size();
-  f.close();
-  return n;
-}
-
-/* Keep only the newest half of the buffer. Called when the file gets large.
-   Dropping the oldest readings is the right trade: recent data is what you
-   need to see the box is alive, and a full buffer means a long outage. */
-void trimBuffer() {
-  File in = LittleFS.open(BUFFER_PATH, "r");
-  if (!in) return;
-
-  size_t skipTo = in.size() / 2;
-  in.seek(skipTo);
-  in.readStringUntil('\n');            // discard the partial line
-
-  File out = LittleFS.open(TEMP_PATH, "w");
-  if (!out) { in.close(); return; }
-
-  while (in.available()) {
-    String line = in.readStringUntil('\n');
-    if (line.length() > 2) { out.print(line); out.print('\n'); }
-  }
-  in.close(); out.close();
-
-  LittleFS.remove(BUFFER_PATH);
-  LittleFS.rename(TEMP_PATH, BUFFER_PATH);
-  Serial.println("[buf] trimmed - oldest half dropped");
-}
-
-void bufferReading(const String &body) {
-  if (bufferSize() > MAX_BUFFER_BYTES) trimBuffer();
-
-  File f = LittleFS.open(BUFFER_PATH, "a");
-  if (!f) { Serial.println("[buf] could not open buffer for append"); return; }
-  f.print(body); f.print('\n');
-  f.close();
-  Serial.printf("[buf] stored, buffer now %u bytes\n", (unsigned)bufferSize());
-}
-
-int bufferedCount() {
-  if (!LittleFS.exists(BUFFER_PATH)) return 0;
-  File f = LittleFS.open(BUFFER_PATH, "r");
-  if (!f) return 0;
-  int n = 0;
-  while (f.available()) { f.readStringUntil('\n'); n++; }
-  f.close();
-  return n;
-}
-
-bool postBody(const String &body, bool quiet = false);
-
-/* Send what is queued. Stops at the first failure and keeps the rest, so a
-   flaky link does not burn through the whole buffer losing rows. */
-void flushBuffer() {
-  if (!LittleFS.exists(BUFFER_PATH)) return;
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  File in = LittleFS.open(BUFFER_PATH, "r");
-  if (!in) return;
-
-  File out = LittleFS.open(TEMP_PATH, "w");
-  if (!out) { in.close(); return; }
-
-  int sent = 0, kept = 0;
-  bool networkDown = false;
-
-  while (in.available()) {
-    String line = in.readStringUntil('\n');
-    line.trim();
-    if (line.length() < 3) continue;
-
-    if (networkDown || sent >= MAX_FLUSH_PER_LOOP) {
-      out.print(line); out.print('\n'); kept++;
-      continue;
-    }
-
-    if (postBody(line, true)) {
-      sent++;
-    } else {
-      networkDown = true;
-      out.print(line); out.print('\n'); kept++;
-    }
+    Serial.println("ADS1115 not found - analog front end unavailable");
   }
 
-  in.close(); out.close();
-  LittleFS.remove(BUFFER_PATH);
-  if (kept > 0) LittleFS.rename(TEMP_PATH, BUFFER_PATH);
-  else          LittleFS.remove(TEMP_PATH);
-
-  if (sent > 0) Serial.printf("[buf] flushed %d, %d still queued\n", sent, kept);
+#if LEAF_WET_SENSOR && LEAF_WET_POWER_PIN >= 0
+  pinMode(LEAF_WET_POWER_PIN, OUTPUT);
+  digitalWrite(LEAF_WET_POWER_PIN, LOW);
+#endif
 }
+
+#if LEAF_WET_SENSOR
+/*
+ * The leaf wetness sensor on ADS1115 A0, as raw millivolts.
+ *
+ * Raw on purpose: what dry and wet read depends on the sensor, the cable and
+ * the supply, so the conversion lives on the server (LW_DRY_MV, LW_WET_MV)
+ * where it can be set and changed without touching the box.
+ *
+ * With LEAF_WET_POWER_PIN set the sensor is powered for about 60 ms per
+ * reading. A grid that sits under constant voltage plates and corrodes,
+ * which is the likely end of the rain plate: it has read wet since 27 Sep.
+ */
+float readLeafWetMv() {
+  if (!haveADS) return NAN;
+#if LEAF_WET_POWER_PIN >= 0
+  digitalWrite(LEAF_WET_POWER_PIN, HIGH);
+  delay(50);                                  // let the sensor settle
+#endif
+  long sum = 0;
+  for (int i = 0; i < 4; i++) { sum += ads.readADC_SingleEnded(0); delay(2); }
+#if LEAF_WET_POWER_PIN >= 0
+  digitalWrite(LEAF_WET_POWER_PIN, LOW);
+#endif
+  return ads.computeVolts((int16_t)(sum / 4)) * 1000.0f;
+}
+#endif
 
 // ============================ posting ============================
 
 #if USE_CELL
-bool postBody(const String &body, bool quiet) {
-  if (!cellReady) return false;
+int sendBody(const String &body, bool quiet) {
+  if (!cellReady) return -1;
 
   int code = modem.postJson(CELL_HOST, "/api/v1/sensors/readings", body,
                             HMAC_SECRET);
 
   if (!quiet) Serial.printf("[reading] HTTP %d\n", code);
 
-if (code == 401) {
+  if (code == 401) {
     Serial.println("  -> signature rejected. Either HMAC_SECRET does not match");
     Serial.println("     .env on the Pi, or the clock is more than 15 min out.");
   } else if (code == -2) {
     Serial.println("  -> no clock. NTP sync failed, cannot sign.");
   }
-return code >= 200 && code < 300;
+  return code;
 }
 
 #else
-bool postBody(const String &body, bool quiet) {
-  if (WiFi.status() != WL_CONNECTED) return false;
+int sendBody(const String &body, bool quiet) {
+  if (WiFi.status() != WL_CONNECTED) return -1;
 
   HTTPClient http;
   String url = String("http://") + PI_HOST + ":5000/api/v1/sensors/readings";
@@ -488,57 +528,22 @@ bool postBody(const String &body, bool quiet) {
   }
 
   http.end();
-  return code >= 200 && code < 300;
+  return code;
 }
 #endif
 
-// ============================ main ============================
+// ============================ serial commands ============================
 
 /* Retrieval when there is no network.
  *
- * If the modem is not working, every reading still lands in flash and stays
- * there. Send 'D' on the USB serial port and the board prints the whole
- * buffer as ordinary [payload] lines, which scripts/serial_bridge.py already
- * knows how to ingest. Send 'C' afterwards to clear it.
+ * D prints every queued reading as an ordinary [payload] line, which
+ * scripts/serial_bridge.py can ingest because 1.5.0 readings carry their
+ * own time. 1.4.0 readings come out as [legacy] lines, which the bridge
+ * ignores; scripts/recover_buffer.py puts those back in time.
  *
- * Deliberately two steps: nothing is deleted until you have confirmed you
- * have it. A single keystroke that wipes a fortnight of field data is not a
- * feature.
+ * Nothing is deleted by D. Clearing takes C and then Y within ten seconds:
+ * a single keystroke that wipes a fortnight of field data is not a feature.
  */
-void dumpBuffer() {
-  if (!LittleFS.exists(BUFFER_PATH)) { Serial.println("[dump] empty"); return; }
-  File f = LittleFS.open(BUFFER_PATH, "r");
-  if (!f) { Serial.println("[dump] could not open the buffer"); return; }
-
-  int n = 0;
-  Serial.println("[dump] begin");
-  while (f.available()) {
-    String line = f.readStringUntil('\n');
-    line.trim();
-    if (line.length() > 2) { Serial.printf("[payload] %s\n", line.c_str()); n++; }
-    delay(2);            // let the receiver keep up
-  }
-  f.close();
-  Serial.printf("[dump] end, %d readings. Send C to clear once you have them.\n", n);
-}
-
-void clearBuffer() {
-  LittleFS.remove(BUFFER_PATH);
-  Serial.println("[dump] buffer cleared");
-}
-
-
-/* Signed-upload self test, triggered by 'T' on the serial console.
-
-   Sends eight bytes through postBinary - the same signing, the same base64,
-   the same modem path as a photograph, minus the camera and the UART.
-
-   The server checks the signature BEFORE it checks the JPEG header, so the
-   response tells you which half works:
-       401 -> signature rejected, the bug is real and now reproducible
-       400 -> signature accepted, body rejected for not being a JPEG. Signing
-              is fine and the fault is upstream, in the camera or the link.
-*/
 /* Upload size sweep, triggered by 'T'.
 
    The same bytes at increasing sizes, each through postBinary. The point is
@@ -546,10 +551,6 @@ void clearBuffer() {
 
        400 -> arrived intact, refused only for not being a JPEG
        401 -> arrived altered, signature no longer matches
-
-   A non-random pattern is used deliberately: if the Pi ever needs to show
-   WHERE corruption happens, a predictable payload makes the damaged offset
-   obvious, which random bytes would not.
 */
 static void sigSweep() {
 #if USE_CELL
@@ -579,50 +580,47 @@ static void sigSweep() {
 #endif
 }
 
-static void sigSelfTest() {
-#if USE_CELL
-  const uint8_t probe[] = "AGRISYNC";
-  Serial.println("[test] signed upload, 8 bytes");
-  int code = modem.postBinary(CELL_HOST,
-                              "/api/v1/photos?name=selftest.jpg",
-                              probe, sizeof(probe) - 1, HMAC_SECRET);
-  Serial.printf("[test] HTTP %d  %s\n", code,
-                code == 401 ? "signature REJECTED - the bug is real"
-              : code == 400 ? "signature OK (body correctly refused as not a JPEG)"
-              : code == 201 ? "accepted"
-                            : "see code");
-#else
-  Serial.println("[test] cellular build only");
-#endif
-}
-
 void serviceSerialCommands() {
+  static unsigned long clearAsked = 0;
   if (!Serial.available()) return;
   int c = Serial.read();
   if (c == 'T' || c == 't') sigSweep();
   else if (c == 'D' || c == 'd') dumpBuffer();
-  else if (c == 'C' || c == 'c') clearBuffer();
-  else if (c == '?') {
-    Serial.printf("[status] fw %s  buffered %d  bytes %u\n",
-                  FIRMWARE_VERSION, bufferedCount(), (unsigned)bufferSize());
+  else if (c == 'C' || c == 'c') {
+    clearAsked = millis();
+    Serial.printf("[clear] this deletes %ld queued and %ld legacy readings. Send Y within 10 s to confirm.\n",
+                  (long)qCount, (long)legacyCount);
+  } else if ((c == 'Y' || c == 'y') && clearAsked && millis() - clearAsked < 10000UL) {
+    clearAsked = 0;
+    queueClear();
+  } else if (c == '?') {
+    Serial.printf("[status] fw %s  boot %lu  up %lus  clock %s  queued %ld  legacy %ld  flash free %u KB\n",
+                  FIRMWARE_VERSION, (unsigned long)bootCount, (unsigned long)upSeconds(),
+                  clockSynced ? "set" : "NOT SET", (long)qCount, (long)legacyCount,
+                  (unsigned)(freeBytes() / 1024));
   }
 }
+
+// ============================ main ============================
 
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=== AgriSync Board A  fw " FIRMWARE_VERSION " ===");
   Serial.printf("device: %s -> pi: %s\n", DEVICE_ID, PI_HOST);
-  Serial.println("commands: D dump buffer, C clear, ? status");
+  Serial.println("commands: D dump, C then Y clear, ? status");
+
+  countBoot();
+  Serial.printf("[boot] %lu, reset: %s\n", (unsigned long)bootCount, resetReason());
 
   pinMode(PIN_STATUS_LED, OUTPUT);
   pinMode(PIN_RAIN_DO, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_RAIN_DO), onRainTip, FALLING);
 
   if (!LittleFS.begin(true)) {
-    Serial.println("[fs] LittleFS mount failed - buffering disabled");
+    Serial.println("[fs] LittleFS mount failed - queueing disabled");
   } else {
-    Serial.printf("[fs] mounted, %d readings already queued\n", bufferedCount());
+    queueBegin();
   }
 
   setupSensors();
@@ -654,14 +652,11 @@ void setup() {
     Serial.println();
     if (!modem.attached()) Serial.println("[cell] not attached to packet data");
     cellReady = modem.dataUp();
-    if (cellReady) {
-      long t = modem.syncTime();
-      Serial.printf("[cell] clock %s (epoch %ld)\n", t ? "ok" : "FAILED", t);
-    }
+    adoptModemClock();
     Serial.printf("[cell] data %s  ip %s\n", cellReady ? "up" : "FAILED",
                   modem.localIP().c_str());
   }
-  currentFault = cellReady ? FAULT_NONE : FAULT_API;
+  updateFault();
   delay(BOOT_SETTLE_MS);
 #else
   Serial.println("[mode] SERIAL ONLY - radio off, Pi stamps the timestamps");
@@ -676,7 +671,7 @@ void loop() {
   photoReceiverService(modem, CELL_HOST, HMAC_SECRET, cellReady);
 #endif
   serviceStatusLed();
-  serviceSerialCommands();   // D dump, C clear, ? status
+  serviceSerialCommands();   // D dump, C then Y clear, ? status
 
   if (lastPost != 0 && millis() - lastPost < POST_INTERVAL_MS) {
     delay(20);
@@ -692,11 +687,15 @@ void loop() {
     Serial.println("[cell] retrying data context");
     cellReady = modem.dataUp();
   }
+  adoptModemClock();
 #endif
 
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
   doc["firmware"]  = FIRMWARE_VERSION;
+  doc["boot"]      = bootCount;
+  doc["up_s"]      = upSeconds();
+  if (firstReading) { doc["reset"] = resetReason(); firstReading = false; }
 
   if (clockSynced) doc["sampled_at"] = (unsigned long)time(nullptr);
 
@@ -722,14 +721,11 @@ void loop() {
 
     // Send the RAW value and the sensor ambient. The Pi applies the
     // emissivity correction, because doing it properly needs a sky
-    // temperature estimate the board cannot make - and because a correction
-    // that lives on the server can be improved and re-applied to the whole
-    // dataset without reflashing a pole-mounted box.
+    // temperature estimate the board cannot make.
     doc["leaf_temp_raw_c"] = rawLeaf;
     doc["mlx_ambient_c"]   = ambient;
 
-    // Local approximation, used only for this board's own logging. The
-    // server value is the authoritative one.
+    // Local approximation, used only for this board's own logging.
     float leafT = correctForEmissivity(rawLeaf, ambient);
     doc["leaf_temp_c"] = leafT;
 
@@ -740,6 +736,11 @@ void loop() {
     }
   }
 
+#if LEAF_WET_SENSOR
+  float lw = readLeafWetMv();
+  if (!isnan(lw)) doc["leaf_wet_mv"] = lw;
+#endif
+
   doc["rain_analog"] = analogRead(PIN_RAIN_AO);
   doc["rain_tips"]   = rainTips;
 
@@ -749,14 +750,14 @@ void loop() {
 #endif
 
 #if USE_WIFI_POST
-  doc["rssi"]            = WiFi.RSSI();
-  doc["buffered_count"]  = bufferedCount();
+  doc["rssi"] = WiFi.RSSI();
 #elif USE_CELL
-
-int csq = modem.signal();
+  int csq = modem.signal();
   if (csq < 99) doc["rssi"] = -113 + 2 * csq;  // CSQ -> dBm, matches WiFi
-
-  doc["buffered_count"]  = bufferedCount();
+#endif
+#if NETWORKED
+  doc["buffered_count"] = qCount;
+  if (legacyCount > 0) doc["legacy"] = legacyCount;
 #endif
 
   String body;
@@ -765,28 +766,31 @@ int csq = modem.signal();
 
 #if TRANSPORT == TRANSPORT_SERIAL
   // Tethered. The line above is the delivery mechanism - the bridge on the Pi
-  // reads it. Nothing to retry, nothing to buffer.
+  // reads it. Nothing to retry, nothing to queue.
   updateFault();
   return;
 #endif
 
-  // Retry before giving up. The first POST after boot fails almost every time:
-  // the network stack has not settled after a long blocking NTP sync, and the
-  // radio may still be waking. Buffering it works, but it produced an alarming
-  // error on every single boot that repeatedly looked like a server problem.
-  bool ok = postBody(body, false);
-  for (int attempt = 1; !ok && attempt <= POST_RETRIES; attempt++) {
+  // Retry before giving up. The first POST after boot often fails while the
+  // radio wakes; queueing it works, but retrying saves a needless re-send.
+  int code = sendBody(body, false);
+  bool ok = code >= 200 && code < 300;
+  for (int attempt = 1; !ok && !permanentRefusal(code) && attempt <= POST_RETRIES; attempt++) {
     Serial.printf("[post] retry %d of %d in %d ms\n",
                   attempt, POST_RETRIES, POST_RETRY_DELAY_MS);
     delay(POST_RETRY_DELAY_MS);
-    ok = postBody(body, false);
+    code = sendBody(body, false);
+    ok = code >= 200 && code < 300;
   }
 
-  if (!ok) {
-    bufferReading(body);
-    currentFault = FAULT_API;
-  } else {
-    flushBuffer();   // link is up, drain anything queued
+  if (ok) {
+    queueFlush();   // link is up, drain anything queued
     updateFault();
+  } else if (permanentRefusal(code)) {
+    Serial.printf("[post] server refused this reading (HTTP %d) - not queued\n", code);
+    updateFault();
+  } else {
+    queuePush(body);
+    currentFault = FAULT_API;
   }
 }

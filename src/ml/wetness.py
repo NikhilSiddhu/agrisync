@@ -92,3 +92,58 @@ def estimated_leaf_temp_c(air_temp_c: float) -> float:
 def is_wet(leaf_wetness: float, threshold: float = 50.0) -> bool:
     """Does this reading count as a wet hour? Threshold is a judgement call."""
     return float(leaf_wetness) >= threshold
+
+
+# ---------------------------------------------------------------------------
+# A real leaf wetness sensor on the ADS1115 A0 input (firmware 1.5.0,
+# -DLEAF_WET_SENSOR=1). The board sends raw millivolts as leaf_wet_mv.
+#
+# Raw millivolts mean nothing until you tell the server what dry and wet look
+# like for YOUR sensor, so nothing downstream uses them until both numbers
+# are in .env:
+#
+#   LW_DRY_MV             the reading with the sensor clean and dry, in air
+#   LW_WET_MV             the reading with the sensor misted until dripping
+#   LW_WET_THRESHOLD_PCT  how far along that range counts as wet (default 20)
+#
+# It works either way round: some sensors rise as they wet, resistive grids
+# usually fall. Dew covers only part of the surface, so the wet threshold is
+# well below 50. Check it on a dew morning against your own eyes.
+# ---------------------------------------------------------------------------
+
+DEFAULT_WET_THRESHOLD_PCT = 20.0
+
+
+def sensor_calibration():
+    """(dry_mv, wet_mv, threshold_pct) from .env, or None until both are set."""
+    try:
+        dry = float(os.environ["LW_DRY_MV"])
+        wet = float(os.environ["LW_WET_MV"])
+    except (KeyError, ValueError):
+        return None
+    if abs(wet - dry) < 1.0:
+        return None
+    try:
+        threshold = float(os.getenv("LW_WET_THRESHOLD_PCT", DEFAULT_WET_THRESHOLD_PCT))
+    except ValueError:
+        threshold = DEFAULT_WET_THRESHOLD_PCT
+    return dry, wet, threshold
+
+
+def measured_wetness_pct(mv: float, dry_mv: float, wet_mv: float) -> float:
+    """0 to 100: where a reading sits between the sensor's dry and wet ends."""
+    pct = 100.0 * (float(mv) - dry_mv) / (wet_mv - dry_mv)
+    return max(0.0, min(100.0, pct))
+
+
+# An hour counts as wet when at least half of its leaf_wet_sensor readings
+# are wet. Readings without the sensor value do not vote.
+SENSOR_HOUR_WET_SHARE = 0.5
+
+
+def sensor_hour_wet(n_wet: int, n: int):
+    """1.0 (wet) or 0.0 (dry) for one hour of sensor readings, or None when
+    the hour has none. n_wet of n readings carried leaf_wet_sensor True."""
+    if not n:
+        return None
+    return 1.0 if n_wet / n >= SENSOR_HOUR_WET_SHARE else 0.0

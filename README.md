@@ -1,7 +1,8 @@
 # AgriSync
 
-Solar-powered field box logging cabbage disease conditions in Hapur, U.P.
-Two ESP32 boards, a Raspberry Pi 5, and a physics-based infection-pressure model.
+AgriSync is the whole system. Phytoplex is the solar-powered unit in the field in
+Hapur, U.P., logging cabbage disease conditions. Inside it: two ESP32 boards. Back
+home: a Raspberry Pi 5 and a physics-based disease-odds engine.
 
 Site: 28.7170, 77.7740 · Crop: cabbage (rabi) · Go-live: transplant, Aug 2026
 
@@ -17,18 +18,21 @@ Read this before you trust any number this system produces.
 build, and the infrared leaf thermometer (MLX90614) never read reliably and was
 removed. Leaf temperature is estimated as air temperature minus 1 °C, and a reading
 counts as wet when that is at or below the dew point. It is a proxy and it is the
-honest weak point of the project. A METER PHYTOS-31 on the ADS1115 A0 input is the
-drop-in upgrade. `src/ml/leaf_temp.py` (the sky-temperature correction for the
-infrared sensor) stays in the repo for when a working one goes back in.
+honest weak point of the project. A leaf wetness sensor on the ADS1115 A0 input is
+the drop-in upgrade, and firmware 1.5.0 and the server are ready for it (see
+[Leaf wetness](#leaf-wetness-proxy-or-sensor)). `src/ml/leaf_temp.py` (the
+sky-temperature correction for the infrared sensor) stays in the repo for when a
+working one goes back in.
 
-**Modelled, not measured:** everything from outside the box. Rain comes from the
+**Modelled, not measured:** everything from outside Phytoplex. Rain comes from the
 ERA5 reanalysis, sunlight from NASA POWER, the next three days from a weather
 forecast. The dashboard labels each one with its source.
 
-**Not calibrated:** every risk number. The API always returns `calibrated: false`.
-The disease models are a physics floor, not probabilities. Two of the four still use
-placeholder parameters that need literature values. Do not make spray decisions from
-this output.
+**Not yet checked against this field:** the disease odds. Their scale starts as one
+stated assumption and only moves once the field log holds at least 20 judged visits
+and 3 with new spots. Until then the dashboard says so. The older infection-pressure
+curve (`/api/v1/risk`) is a physics floor, not a probability, and always returns
+`calibrated: false`. Do not make spray decisions from either. Walk the crop.
 
 ---
 
@@ -54,12 +58,22 @@ src/ml/physics_baseline.py   disease infection pressure models
 src/ml/forecast_risk.py      the same models run 12-72 h ahead on a forecast
 src/ml/anomaly.py            unusual-conditions check against the last 15 days
 src/ml/attribution.py        disease, or just stress? (canopy fall vs weather)
+src/ml/odds.py               the odds engine: one number, with a range
+src/ml/leafwet.py            leaf wetness from an energy balance, not the dew-point rule
+src/ml/pathogens.py          the five diseases: temperatures, wet hours needed
+src/ml/mos.py                corrects the forecast to this field
+src/ml/calibration.py        checks the odds against the field log
+src/ml/baseline.py           a model of this field when it is healthy; flags departures
+src/alerts.py                phone alerts when the odds turn high
 src/feeds/sources.py         Open-Meteo, ERA5-Land, ERA5, NASA POWER, Sentinel-2, Sentinel-1
-scripts/update_feeds.py      refreshes every outside feed, run hourly by a timer
+scripts/update_feeds.py      refreshes every outside feed and the odds, run hourly by a timer
+scripts/dump_buffer.py       copies the readings stuck in Phytoplex's flash to a file
+scripts/recover_buffer.py    puts those readings back at their right times
 src/api/fieldlog.py          /admin/field-log, what the plants actually did
 src/weather/forecast.py      Open-Meteo forecast fetch (no API key needed)
-firmware/synthetic_wifi/     Board A - ESP32 sensor node
+firmware/synthetic_wifi/     Board A - ESP32 sensor node (firmware 1.5.0)
 firmware/esp32cam_capture/   Board B - ESP32-CAM
+docs/FIRMWARE_1.5.0.md       what firmware 1.5.0 does: queue, payload, serial commands
 scripts/backup_mongo.sh      nightly mongodump
 tests/                       runs without any hardware
 data/field_log.csv           your field observations - the most valuable file here
@@ -110,17 +124,19 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-About 200 tests, no hardware, no database and no internet needed. They check the
-dew point math, the disease model shape, every API route including auth rejection,
-and every outside feed with its source replaced by a fake.
+About 240 tests, no hardware, no database and no internet needed. They check the
+dew point math, the odds engine, the disease model shape, the queued-reading ingest,
+the buffer recovery, every API route including auth rejection, and every outside
+feed with its source replaced by a fake. A few skip when an optional package is
+missing.
 
 ## Bench mode: USB instead of WiFi
 
 The board is powered from the Pi's USB anyway. On the bench that cable is a far
-more reliable path than WiFi, and WiFi never ships — the field box runs on 4G
+more reliable path than WiFi, and WiFi never ships — Phytoplex runs on 4G
 through the tunnel.
 
-Flash with `-DUSE_WIFI_POST=0` in `platformio.ini`, then run the bridge:
+Flash with `-DTRANSPORT=0` in `platformio.ini`, then run the bridge:
 
 ```bash
 sudo systemctl start agrisync-serial-bridge
@@ -139,8 +155,9 @@ flashing:
 sudo systemctl stop agrisync-serial-bridge
 ```
 
-Set `USE_WIFI_POST` back to 1, or switch to the A7670C, before the box leaves
-your desk.
+Set `TRANSPORT` back to 2 (the A7670C cellular modem) before Phytoplex leaves your
+desk. The bridge must also be stopped whenever you dump the buffer; see
+[Season end](#season-end-dump-recover-flash-clear).
 
 ## Looking at your data
 
@@ -184,6 +201,113 @@ python -m src.ml.physics_baseline
 
 Prints the infection pressure table across temperature and wet hours.
 
+## The odds engine
+
+The big number on the dashboard. It lives in `src/ml/odds.py`.
+
+**What the number is.** The chance that the next 24 hours start an infection you
+would later see as new spots. All five diseases together (two Alternaria spots,
+downy mildew, black rot, white mould), as **one number with a range**. The 48 and
+72 hour versions sit next to it.
+
+**How it gets there.** A disease needs three things at once: the right weather, a
+crop at a susceptible stage, and spores. The engine plays the next days out
+1,020 times:
+
+- 51 weather runs (the ECMWF ensemble), each corrected to this field using
+  Phytoplex's own record;
+- times 20 draws of the disease and leaf settings, each within what the
+  literature leaves uncertain.
+
+Each of the 1,020 is one "world". In each world the diseases add up to one
+infection hazard H, and the odds in that world are 1 − exp(−H). The headline is the
+average over the worlds. The **range is the 10th to 90th percentile**, so
+four worlds in five land inside it.
+
+**Levels.**
+
+| Level | Odds |
+|---|---|
+| low | under 10% |
+| moderate | 10% to under 25% |
+| high | 25% or more |
+
+**Wet leaves** are not read off the dew point. The engine works out, hour by hour,
+whether a top leaf collects dew or rain and how fast it dries, from air temperature,
+humidity, wind, cloud and sunshine. The satellite's view of how closed the canopy is
+shades the leaf. Whether Phytoplex's own wetness reading is used is in
+[Leaf wetness](#leaf-wetness-proxy-or-sensor).
+
+**The crop and the spores** change how fast the odds rise:
+
+- crop stage comes from days since transplanting (`TRANSPLANT_DATE`). With no date
+  the engine weighs every stage evenly, and the page says so;
+- spores follow the calendar month, are eight times higher for 28 days after the
+  field log records symptoms of that disease, and are doubled for Alternaria and
+  black rot when the satellite check sees the canopy falling in disease weather.
+
+**Not yet checked against this field.** The scale is one assumption: with no disease
+on the farm, one ideal wet spell for one disease gives a 1 in 10 chance. Lab
+numbers say *when* the odds rise. Only your field log says *how far* they should
+go here. Every visit, healthy ones included, nudges the scale towards what really
+happened. Until the log holds **at least 20 judged visits and at least 3 positives**,
+the page says **"not yet checked against this field"**.
+
+- A visit is *judged* for a disease when the walk either found new spots of it or
+  ruled it out. A walk that checks several diseases gives several judgments. The
+  weather that counts is the weather before the visit, over the days that disease
+  takes to show.
+- A *positive* is a judgment that found new spots.
+- Log the healthy days too. A scale fitted only on sick days cannot tell you when
+  not to worry.
+
+**Also on the page:** the wet-hour count with its range, how many of the 51 weather
+runs put the odds high, "spots could show until ...", how this year's weather ranks
+against the last 20 seasons (`CLIMATE_YEARS`), and last week against cabbage's best
+conditions (days 15 to 24 °C, nights 4 to 15 °C).
+
+**What it cannot do.** It cannot see spores. It cannot see a sprayed crop. It is
+not a spray order.
+
+### Alerts
+
+When the 48 hour odds are **high** and at least half of the 51 weather runs agree,
+`src/alerts.py` sends one message to your phone. After that, at most one reminder a
+day while the odds stay high. The message says when the leaves are expected wet,
+which disease is most likely, and, until the odds are checked against the field,
+"not yet checked against this field". Set a channel in `.env`:
+`ALERT_WEBHOOK_URL` (ntfy.sh, Slack or Discord), or `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID`. With none set, nothing is sent.
+
+## Leaf wetness: proxy or sensor
+
+Two readings sit side by side. They are never mixed in the stored history.
+
+**Proxy (always).** With no leaf thermometer, leaf temperature is air temperature
+minus `LEAF_TEMP_OFFSET_C` (1.0 °C by default). The reading is 100 when the leaf is
+at or below the dew point and falls to 0 once it is 2 °C above. It is stored as
+`leaf_wetness`, marked `leaf_wetness_source: air_proxy` and `leaf_wetness_estimated`.
+Phytoplex has no working MLX90614 today, so all live wetness is this proxy.
+
+**Calibrated sensor (once fitted).** Firmware 1.5.0, built with
+`-DLEAF_WET_SENSOR=1`, sends the raw millivolts as `leaf_wet_mv`. The server cannot
+read millivolts until it knows what *your* sensor says:
+
+1. Read the sensor clean and dry, in air. Put it in `.env` as `LW_DRY_MV`.
+2. Mist it until it drips and read again. Put that in `LW_WET_MV`.
+3. Leave `LW_WET_THRESHOLD_PCT` at 20, or change it. It is how far along the
+   dry-to-wet range counts as wet. It is low on purpose: dew covers only part of the
+   surface. Check it on a dew morning against your own eyes.
+
+It works whichever way round the sensor reads. With both numbers set, each reading
+gets `leaf_wet_pct` (0 to 100) and `leaf_wet_sensor` (true or false). With either one
+missing, nothing downstream uses the sensor.
+
+**What the odds do with it.** When the sensor is calibrated, its wet hours replace
+the simulated ones for the hours Phytoplex has already seen. An hour counts as wet
+when at least half of its sensor readings are wet. **The forecast stays simulated.**
+The proxy keeps being stored, so you can compare the two night by night.
+
 ## Outside feeds
 
 Free data about the same field, fetched by the Pi every hour and shown on the
@@ -192,24 +316,89 @@ dashboard. No accounts, no API keys.
 | Feed | Source | What it gives |
 |---|---|---|
 | Forecast | Open-Meteo, plus the 51-run ECMWF ensemble | infection pressure 12-72 h ahead, and how the weather runs split |
-| Cross-check | ERA5-Land reanalysis, ~5 days behind | station vs model: bias, correlation, and the days the station missed |
-| Rain | ERA5 | season rain; the box only has a wet/dry sensor |
+| Cross-check | ERA5-Land reanalysis, ~5 days behind | Phytoplex vs model: bias, correlation, and the days Phytoplex missed |
+| Rain | ERA5 | season rain; Phytoplex only has a wet/dry sensor |
 | Sunlight | NASA POWER | daily solar energy |
 | Greenness | Sentinel-2 L2A via Earth Search | NDVI over the field on clear passes |
 | Radar | Sentinel-1 GRD via Microsoft Planetary Computer | radar vegetation index on every pass, cloud or not |
-| Unusual conditions | the station itself | the last 6 hours against the same hours over 15 days |
+| Unusual conditions | Phytoplex itself | the last 6 hours against the same hours over 15 days |
 | Disease or stress | all of the above | points at disease only when the canopy falls while the weather favoured infection |
+| Disease odds | all of the above, plus the field log | the odds engine's numbers: see [The odds engine](#the-odds-engine) |
 
-Install once on the Pi, with the middle of the field in decimal degrees (it goes
-into `.env`, never into git):
+## The jobs
+
+Two things keep the feeds and the odds fresh. Both run on the Pi.
+
+**`scripts/update_feeds.py`** refreshes every feed, then recomputes everything built
+from them. Each job is independent. One failing (a slow server, no internet) is
+recorded in the feeds status document and the others still run. It only ever reads
+the readings collection.
 
 ```bash
-bash deploy/install_feeds.sh LAT LON
-python -m scripts.update_feeds all        # everything now; "auto" is what the timer runs
+.venv/bin/python -m scripts.update_feeds auto      # what the timer runs: only what is due
+.venv/bin/python -m scripts.update_feeds all       # everything, now
+.venv/bin/python -m scripts.update_feeds odds      # or any one job
+```
+
+The jobs are `forecast`, `reanalysis`, `satellite`, `radar`, `anomaly`, `check`,
+`calibration`, `baseline`, `mos`, `climate`, `odds` and `alerts`. In `auto` mode each
+runs when it is older than:
+
+| Job | Runs again after |
+|---|---|
+| `forecast` | 3 hours |
+| `reanalysis`, `satellite`, `radar` | 20 hours |
+| `check`, `calibration` | 6 hours |
+| `baseline` | 12 hours |
+| `mos` (corrects the forecast to this field) | 24 hours |
+| `climate` (20 past seasons for the rank) | 30 days |
+| `anomaly`, `odds`, `alerts` | every run |
+
+**`deploy/install_feeds.sh`** sets the above up. Safe to run again. It:
+
+1. Asks for the field position the first time, as decimal degrees, and writes it to
+   `.env`. It never goes into git, because this repo is public.
+2. Installs the Python packages from `requirements.txt` (numpy is among them; the
+   odds engine needs it).
+3. Installs `agrisync-feeds.service` and `agrisync-feeds.timer`. The timer starts 4
+   minutes after boot and then fires every hour.
+4. Runs one first fill (5 to 10 minutes, about 45 satellite scenes), then restarts
+   the dashboard and the API.
+
+```bash
+bash deploy/install_feeds.sh LAT LON      # first time: LAT LON is the middle of the field
+bash deploy/install_feeds.sh              # later runs need no arguments
 journalctl -u agrisync-feeds -n 40        # what the last run did
 ```
 
-One feed failing (a slow server, no internet) is recorded and the others still run.
+The first `climate` run makes about 20 requests to ERA5, so the "how this season
+ranks" line shows up a little after the rest.
+
+## Settings in `.env`
+
+`cp .env.example .env` and fill in the blanks. The ones the odds engine adds:
+
+| Key | Default | What it does |
+|---|---|---|
+| `TRANSPLANT_DATE` | empty | Day the crop went in, `YYYY-MM-DD`. Sets the crop stage. Empty: the first field-log visit marked transplanted is used, else every stage is weighed evenly. |
+| `CLIMATE_YEARS` | `20` | How many past seasons the odds are ranked against. |
+| `LEAF_TEMP_OFFSET_C` | `1.0` | Degrees subtracted from air temperature to stand in for leaf temperature. |
+| `LW_DRY_MV` | empty | Leaf wetness sensor reading, dry, in millivolts. |
+| `LW_WET_MV` | empty | Same sensor, misted until dripping. Both must be set or the sensor is ignored. |
+| `LW_WET_THRESHOLD_PCT` | `20` | How far along dry-to-wet counts as wet. |
+| `ALERT_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | empty | Where odds alerts go. Any one channel is enough. |
+| `ALERT_ESTIMATED` | `0` | `1` lets the old per-disease alert rule include downy mildew and black rot. |
+| `DEVICE_HMAC_SECRET` | empty | Signing key shared with Phytoplex. Rotated at season end. |
+
+`ALERT_STALE_MINUTES` (the watchdog) is unchanged. The `LW_*` keys are only needed
+once a leaf wetness sensor is fitted. `install_feeds.sh` also writes `FIELD_LAT`,
+`FIELD_LON`, `FIELD_RADIUS_M` and `SEASON_START` into `.env`.
+
+## Packages
+
+`requirements.txt` includes **numpy**: the odds engine and `scripts/update_feeds.py`
+import it. Satellite reading needs `rasterio`. After a `git pull`, run `pip install -r
+requirements.txt` (`install_feeds.sh` does it for you).
 
 ---
 
@@ -257,6 +446,14 @@ cd firmware/synthetic_wifi && pio run -t upload && pio device monitor
 Secrets are passed in as environment variables and injected as build flags, so no
 credential is ever committed.
 
+The Phytoplex field build is firmware 1.5.0 over cellular (`-DTRANSPORT=2`). It also
+needs `CELL_APN`, `DEVICE_HMAC_SECRET`, `CF_ACCESS_ID` and `CF_ACCESS_SECRET` in the
+environment. What 1.5.0 changes (the queue, the new payload fields, the serial
+commands) is in [docs/FIRMWARE_1.5.0.md](docs/FIRMWARE_1.5.0.md).
+
+**If Phytoplex has readings stuck in its flash, do not flash it yet.** Follow
+[Season end](#season-end-dump-recover-flash-clear) first.
+
 ---
 
 ## Data routine
@@ -274,13 +471,16 @@ spraying, and weather damage, because they explain the anomalies you will find l
 
 ## Still to build
 
-- Firmware: re-send buffered readings over cellular (today only Wi-Fi flushes the buffer)
-- Conformal calibration of the risk band, once the field log holds a season of outcomes
-- A learned healthy-field model across sensor and satellite signals (today's
-  unusual-conditions check is a per-hour median and spread, not a trained model)
-- Direct leaf-wetness measurement
+- Checking the odds against this field, once the field log holds 20 judged visits and
+  3 positives. The code is there; the field log has to catch up
+- Direct leaf-wetness measurement: the firmware and server are ready, the sensor is
+  not fitted yet
 - Real literature parameters for downy mildew and black rot
-- Alerts, after calibration
+- Fix Phytoplex's faults found on 22 Oct: the leaf thermometer is missing,
+  `rain_tips` reads 53.6 million (the input is chattering), the rain plate has read
+  wet since 27 Sep, and the BME280 saturates at 100% humidity
+- Re-send of readings stuck in Phytoplex, in the field. Firmware 1.5.0 fixes this,
+  but it has to be flashed first (see Season end)
 
 
 ---
@@ -295,18 +495,127 @@ cat deploy/README.md
 ```
 
 That covers the API service, the health watchdog with phone alerts, the nightly
-backup, and setting the Pi's clock. Do not put the box in the field before those
+backup, and setting the Pi's clock. Do not put Phytoplex in the field before those
 are running and you have tested a reboot.
 
 ## What the board does when the network drops
 
-Readings that fail to POST are written to the ESP32's flash. On Wi-Fi they are
-retried when the link returns. On cellular (firmware 1.4.0, the field box) they are
-kept but **not yet re-sent**: the flush only runs on Wi-Fi, and the box never sets
-its clock, so the server stamps each reading on arrival. Kept readings can be dumped
-over USB with the `D` serial command; never send `C`, which clears them. Check the
-queue depth in any payload: `buffered_count`. The flash holds roughly 5,700 lines
-before the oldest half is dropped.
+**Firmware 1.5.0.** Readings that fail to POST are written to the ESP32's flash in
+64 KB segments and sent, oldest first, as soon as the link is back (Wi-Fi or
+cellular). A cursor remembers where it got to, so a line is never sent twice. When
+flash runs short, the oldest segment is dropped, never the whole queue. The board
+copies the modem's NTP time into its own clock, so every reading says when it was
+taken. Check the queue depth in any payload: `buffered_count`. Details:
+[docs/FIRMWARE_1.5.0.md](docs/FIRMWARE_1.5.0.md).
+
+**Firmware 1.4.0 (what is in the field today).** Readings that fail to POST are kept
+but **not re-sent** on cellular, because the flush only ran on Wi-Fi. The board never
+sets its clock, so a kept reading has no time on it. At about 1.4 MB (roughly 5,700
+lines) the buffer deletes itself. Kept readings can be dumped over USB with the `D`
+serial command. **Never send `C`, which clears them.**
+
+## Season end: dump, recover, flash, clear
+
+Phytoplex holds readings in its flash that the server never received: 3,340 on
+22 Oct, including the whole week of 3 to 10 Oct. They can only be got out over USB.
+Do these steps **in this order**, on the Pi, with Phytoplex plugged into it.
+
+> **Never send `C` or `c` to Phytoplex over serial. It clears the buffer.** The one
+> exception is the last step, after everything else has been checked.
+>
+> **Don't reflash before the buffer is dumped.**
+>
+> **Don't plug Phytoplex into a Pi while `agrisync-serial-bridge` is running.**
+
+1. **Stop the serial bridge.**
+   ```bash
+   sudo systemctl stop agrisync-serial-bridge
+   ```
+   The bridge forwards every line Phytoplex prints as a live reading. Three weeks of
+   old readings would all be stamped with the minute of the dump.
+
+2. **Dump the buffer.**
+   ```bash
+   .venv/bin/python -m scripts.dump_buffer --port /dev/ttyUSB0     # or set SERIAL_PORT
+   ```
+   - **It refuses to run while `agrisync-serial-bridge` is active.** `--force`
+     overrides that. Don't.
+   - It sends one `D` and waits for the answer. Phytoplex only reads commands between
+     cycles, so allow up to 7 minutes of quiet (`--quiet-s 420`, the default).
+   - It writes `data/dumps/<device>-<UTC time>.jsonl` and a `.log` next to it. The
+     first line of the `.jsonl` says how many readings the board expected and how many
+     arrived.
+   - **It never sends `C`, and deletes nothing.**
+   - If it warns that the dump never ended, or that the counts differ, run it again.
+     Keep a copy of the dump file somewhere other than the Pi.
+
+3. **Dry-run the recovery.**
+   ```bash
+   .venv/bin/python -m scripts.recover_buffer data/dumps/<file>.jsonl
+   ```
+   It writes nothing. It prints how it would place every line. Lines are spaced
+   between the readings the server did receive (each carries `buffered_count`), and a
+   drop in `rain_tips` marks a reboot. Read the summary:
+   - Most lines should read *placed, trusted*: their spacing is within 25% of the
+     usual five-minute cycle.
+   - *Placed, approximate* lines were counted from one side only, more than 36 cycles
+     (about three hours) from a reading the server has. They are stored with
+     `ts:approximate` and kept out of the models.
+   - *Already on server* lines reached the server but the reply was lost. They are
+     not stored twice.
+   - *Could not place* lines need a look before you go on.
+   - It checks the placed air temperatures against the outside temperatures hour by
+     hour. They must follow each other (r of 0.8 or better), or `--write` refuses.
+     The check is skipped when the dump covers under 24 hours.
+
+4. **Write it.**
+   ```bash
+   .venv/bin/python -m scripts.recover_buffer data/dumps/<file>.jsonl --write
+   ```
+   It is safe to run twice: each stored reading records which dump and slot it came
+   from, so nothing is stored twice. Check the dashboard: the gaps should be filled.
+
+5. **Only then, flash 1.5.0.** Build it on your own machine with the real environment
+   variables (see [Firmware](#firmware)), including a **new** `DEVICE_HMAC_SECRET`:
+   ```bash
+   openssl rand -hex 32          # make a new one; keep it out of git and out of chat
+   cd firmware/synthetic_wifi && pio run -t upload
+   ```
+   - **Don't flash a build made without your real values** (for example one built in
+     a sandbox). It is a compile check only.
+   - Use plain `upload`. Don't erase the flash or upload a filesystem image.
+   - On its first start, 1.5.0 moves the old buffer to `/legacy.jsonl`. It is kept,
+     never sent, and `D` still prints it as `[legacy]` lines.
+
+6. **Rotate the HMAC secret on the server.** The old one is in public git history, so
+   treat it as burned. Put the same new value in `DEVICE_HMAC_SECRET` in the Pi's
+   `.env`, then:
+   ```bash
+   sudo systemctl restart agrisync-api
+   ```
+   Until the two match, every POST comes back 401 and Phytoplex queues. Nothing is
+   lost, and the queue empties afterwards. The camera board (`firmware/esp32cam_capture`)
+   uses the same secret and needs rebuilding with the new value too.
+
+7. **Check, then clear.** Send `?` over serial (`pio device monitor`). It should show
+   `fw 1.5.0`, the clock `set`, and a queue that is draining. A new reading should
+   appear on the dashboard. Only when the recovery is written and checked, clear the
+   old buffer: send `C`, then `Y` within 10 seconds. This deletes the queue and the
+   legacy readings from the box.
+
+## Deploying an update to the Pi (after approval only)
+
+**Do not run these until the previews are approved and the changes are pushed.**
+Don't pull power on the Pi while it runs.
+
+```bash
+cd ~/agrisync && git pull && bash deploy/install_feeds.sh
+sudo systemctl restart agrisync-api agrisync-dashboard
+```
+
+Add the new keys to `.env` first (see [Settings in `.env`](#settings-in-env)). The
+installer installs numpy, refreshes the hourly timer, fills the feeds once and
+restarts both web apps.
 
 ## Reading the status LED from the ground
 
@@ -322,8 +631,9 @@ before the oldest half is dropped.
 ## Security
 
 `docs/SECURITY.md` covers SSH keys, firewall, automatic updates, key rotation,
-and setting up a Cloudflare Tunnel with Access service tokens for when the box
-moves out of WiFi range and onto 4G.
+and setting up a Cloudflare Tunnel with Access service tokens for when Phytoplex
+moves out of WiFi range and onto 4G. For rotating the device HMAC secret, see step 6
+of [Season end](#season-end-dump-recover-flash-clear).
 
 Short version of the threat that matters: someone injecting fake readings would
 poison your dataset silently and permanently. Protecting writes is worth real

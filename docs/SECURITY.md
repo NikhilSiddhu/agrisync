@@ -160,7 +160,7 @@ credentials. They reveal nothing beyond whether the service is up.
 
 ## 6. Cloudflare Tunnel, for the 4G board
 
-Once the box moves 1 km away and talks over the A7670, it cannot reach
+Once Phytoplex moves 1 km away and talks over the A7670, it cannot reach
 `192.168.1.39`. That address only exists inside your house.
 
 The wrong fix is port forwarding: it puts your API on the public internet

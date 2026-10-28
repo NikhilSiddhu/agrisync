@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from flask import Flask, jsonify
+from src.api.admin_api import bp as admin_api_bp
 from src.api.auth import bp as auth_bp
 from src.api.devices import bp as devices_bp
 from src.api.fieldlog import bp as fieldlog_bp
@@ -41,6 +42,7 @@ def create_app(config_object=Config):
     init_db(app)
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(admin_api_bp)
     app.register_blueprint(health_bp)
     app.register_blueprint(photos_bp)
     app.register_blueprint(devices_bp)

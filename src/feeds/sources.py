@@ -18,7 +18,12 @@ ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 POWER_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 STAC_URL = "https://earth-search.aws.element84.com/v1/search"
 
+PREVIOUS_URL = "https://previous-runs-api.open-meteo.com/v1/forecast"
+
 HOURLY_VARS = "temperature_2m,relative_humidity_2m,dew_point_2m"
+# What the leaf energy balance needs on top of temperature and humidity.
+# Wind is asked for in m/s: Open-Meteo's default is km/h.
+DRIVER_VARS = "precipitation,wind_speed_10m,cloud_cover,shortwave_radiation"
 ENSEMBLE_MODEL = os.getenv("FORECAST_ENSEMBLE_MODEL", "ecmwf_ifs025")
 
 
@@ -72,16 +77,21 @@ def parse_hourly(payload, suffix=""):
             "rh_pct": val("relative_humidity_2m"),
             "dew_c": val("dew_point_2m"),
             "precip_mm": val("precipitation"),
+            "wind_ms": val("wind_speed_10m"),
+            "cloud_pct": val("cloud_cover"),
+            "sw_wm2": val("shortwave_radiation"),
         })
     return rows
 
 
-def forecast(lat, lon, days=4):
-    # past_days=1: the model's own last 24 hours stand in for any hour the
-    # station missed, so a station outage does not blank the 12 h column.
+def forecast(lat, lon, days=4, past_days=7):
+    # past_days: the model's own recent hours stand in for any hour the
+    # station missed, and carry the cloud, wind and sunshine the station does
+    # not measure. Seven days covers the gap until ERA5 catches up.
     payload = _get(FORECAST_URL, {
         "latitude": lat, "longitude": lon, "timezone": "GMT",
-        "hourly": HOURLY_VARS + ",precipitation", "forecast_days": days, "past_days": 1,
+        "hourly": HOURLY_VARS + "," + DRIVER_VARS, "wind_speed_unit": "ms",
+        "forecast_days": days, "past_days": past_days,
     })
     return parse_hourly(payload)
 
@@ -102,9 +112,42 @@ def parse_ensemble(payload):
 def ensemble(lat, lon, days=4, model=ENSEMBLE_MODEL):
     payload = _get(ENSEMBLE_URL, {
         "latitude": lat, "longitude": lon, "timezone": "GMT",
-        "hourly": HOURLY_VARS, "models": model, "forecast_days": days, "past_days": 1,
+        "hourly": HOURLY_VARS + "," + DRIVER_VARS, "wind_speed_unit": "ms",
+        "models": model, "forecast_days": days, "past_days": 1,
     }, timeout=90)
     return parse_ensemble(payload)
+
+
+def parse_previous(payload, day=1):
+    """Previous Runs API -> rows of what the forecast said `day` days before
+    each hour (lead 24-47 h for day=1)."""
+    h = payload.get("hourly") or {}
+    suf = f"_previous_day{day}"
+    rows = []
+    for i, stamp in enumerate(h.get("time", [])):
+        def val(name):
+            col = h.get(name + suf)
+            return col[i] if col is not None and i < len(col) else None
+        r = {"time": _utc(stamp), "temp_c": val("temperature_2m"), "dew_c": val("dew_point_2m"),
+             "rh_pct": val("relative_humidity_2m"), "cloud_pct": val("cloud_cover"),
+             "wind_ms": val("wind_speed_10m"), "sw_wm2": val("shortwave_radiation"),
+             "precip_mm": val("precipitation")}
+        if r["temp_c"] is not None:
+            rows.append(r)
+    return rows
+
+
+def previous_runs(lat, lon, start, end, day=1):
+    """Forecasts as they were issued a day earlier, for training the field
+    correction without waiting a season to collect them (src/ml/mos.py)."""
+    names = ("temperature_2m", "dew_point_2m", "relative_humidity_2m", "cloud_cover", "wind_speed_10m",
+             "shortwave_radiation", "precipitation")
+    payload = _get(PREVIOUS_URL, {
+        "latitude": lat, "longitude": lon, "timezone": "GMT", "wind_speed_unit": "ms",
+        "hourly": ",".join(f"{n}_previous_day{day}" for n in names),
+        "start_date": start.isoformat(), "end_date": end.isoformat(),
+    }, timeout=120)
+    return parse_previous(payload, day)
 
 
 def era5_land(lat, lon, start, end):
@@ -120,6 +163,29 @@ def era5_land(lat, lon, start, end):
     meta = {"grid_lat": payload.get("latitude"), "grid_lon": payload.get("longitude"),
             "elevation_m": payload.get("elevation")}
     return rows, meta
+
+
+def era5_drivers(lat, lon, start, end):
+    """Hourly ERA5 rain, wind, cloud and sunshine: what the leaf energy
+    balance needs for the hours the station measured, after the forecast's
+    own seven past days have rolled off."""
+    payload = _get(ARCHIVE_URL, {
+        "latitude": lat, "longitude": lon, "timezone": "GMT", "wind_speed_unit": "ms",
+        "start_date": start.isoformat(), "end_date": end.isoformat(),
+        "hourly": DRIVER_VARS, "models": "era5",
+    }, timeout=120)
+    return [r for r in parse_hourly(payload)
+            if any(r[k] is not None for k in ("precip_mm", "wind_ms", "cloud_pct", "sw_wm2"))]
+
+
+def era5_history(lat, lon, start, end):
+    """Everything the odds engine needs, from ERA5, for past seasons."""
+    payload = _get(ARCHIVE_URL, {
+        "latitude": lat, "longitude": lon, "timezone": "GMT", "wind_speed_unit": "ms",
+        "start_date": start.isoformat(), "end_date": end.isoformat(),
+        "hourly": HOURLY_VARS + "," + DRIVER_VARS, "models": "era5",
+    }, timeout=180)
+    return [r for r in parse_hourly(payload) if r["temp_c"] is not None]
 
 
 def parse_rain(payload):
