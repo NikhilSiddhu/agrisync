@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 
 from src.bucketing import bucket_minutes_for, bucketed
+from src import version
 
 WET_THRESHOLD = 50.0
 STALE_MINUTES = int(os.getenv("DASH_STALE_MINUTES", "30"))
@@ -141,6 +142,7 @@ def latest():
         "age_minutes": round(age_min, 1) if age_min is not None else None,
         "online": bool(clean and age_min is not None and age_min < STALE_MINUTES),
         "sensors": doc.get("sensors") or {},
+        "firmware": newest.get("firmware") or doc.get("firmware"),
         "suspect": not clean,
         "receiving": bool(newest_age is not None and newest_age < STALE_MINUTES),
         "incoming_flagged": bool(newest.get("quality_flags")),
@@ -680,7 +682,9 @@ def summary():
             "observed_at": l.get("observed_at"), "age_minutes": l.get("age_minutes"),
             "time": t.strftime("%I:%M %p").lstrip("0").lower() if t else None,
             "online": l.get("online"),
+            "firmware": l.get("firmware"),
         }
+    out["versions"] = version.versions(l.get("firmware") if l else None)
     r = risk()
     levels = [LEVEL_OF(x.get("pressure")) for x in r.get("diseases", [])]
     levels = [x for x in levels if x]

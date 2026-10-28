@@ -72,6 +72,7 @@ scripts/recover_buffer.py    puts those readings back at their right times
 scripts/publish_firmware.py  offers a firmware image to the box over 4G (1.6.0)
 src/device_link.py           the signed settings the Pi sends back to the box (1.6.0)
 deploy/update.sh             updates the Pi from GitHub, checks it, goes back if not
+src/version.py               what runs where: Pi release, odds engine, next firmware
 src/api/fieldlog.py          /admin/field-log, what the plants actually did
 src/weather/forecast.py      Open-Meteo forecast fetch (no API key needed)
 firmware/synthetic_wifi/     Board A - ESP32 sensor node (firmware 1.6.0)
@@ -638,6 +639,25 @@ those steps. Don't pull power on the Pi while it runs; Phytoplex keeps posting
 throughout and its readings wait in its queue for the minute the API restarts.
 
 Add any new keys to `.env` first (see [Settings in `.env`](#settings-in-env)).
+
+At the end it prints what is running: the firmware the box's latest reading came
+from, the Pi's release and commit, and the odds engine.
+
+### Versions
+
+Both sites show the same four things, and none of them is typed into a page:
+
+- **Phytoplex firmware**: read from the newest reading (every reading carries it).
+- **Next firmware**: `NEXT_FIRMWARE` in `src/version.py`, written and waiting for the
+  season-end flash.
+- **Pi software**: `RELEASE` in `src/version.py`, plus the commit read straight from
+  `.git`, so the dashboard always names the exact code it runs. Raise `RELEASE` with
+  each push meant for the Pi.
+- **Odds engine**: `ODDS_ENGINE` in `src/version.py`. Raise it when the model's sums
+  change, not for a fix that leaves every number the same.
+
+The dashboard prints them in its footer; agrisync.tech reads them from
+`/summary.json` with its live numbers, every five minutes.
 
 ## Reading the status LED from the ground
 

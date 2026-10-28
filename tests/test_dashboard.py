@@ -204,3 +204,47 @@ def test_social_links_are_the_owners_only(client):
     assert b"x.com/nikhilsiddhu_" in body
     for other in (b"facebook.com", b"instagram.com", b"youtube.com", b"twitter.com"):
         assert other not in body
+
+
+# --- what is running, and keeping the page live ---
+
+def test_versions_come_from_the_readings_and_the_checkout(db, client):
+    db.readings.update_many({}, {"$set": {"firmware": "1.4.0"}})
+    from src import version
+    s = client.get("/summary.json").get_json()
+    assert s["latest"]["firmware"] == "1.4.0"
+    v = s["versions"]
+    assert v["firmware"] == "1.4.0"
+    assert v["release"] == version.RELEASE
+    assert v["next_firmware"] == version.NEXT_FIRMWARE
+    assert v["odds_engine"] == version.ODDS_ENGINE
+    body = client.get("/").data.decode()
+    assert 'data-live="versions"' in body
+    assert version.RELEASE in body and "1.4.0" in body
+
+
+def test_versions_survive_readings_without_firmware(client):
+    s = client.get("/summary.json").get_json()
+    assert s["versions"]["firmware"] is None
+    assert "Phytoplex firmware</i> —" in client.get("/").data.decode()
+
+
+def test_minute_refresh_carries_the_tile_lines(client):
+    d = client.get("/data.json").get_json()
+    sp = d["spark"]
+    assert sp["hours"] == 24 and sp["now"] > 0
+    assert len(sp["t"]) == len(sp["air"]) > 0
+
+
+def test_every_chart_reads_a_swappable_data_block(client):
+    """The five-minute refresh swaps the d-* blocks and calls window.AGLive;
+    a chart fed by an inline literal would never move."""
+    body = client.get("/").data.decode()
+    for k in ("spark", "odds", "series", "sat", "radar", "compare", "season"):
+        assert f'id="d-{k}"' in body
+    assert "|tojson" not in body and "var SAT = {" not in body
+    for k in ("series", "sat", "radar", "compare", "season", "spark", "odds"):
+        assert f"window.AGLive.{k} =" in body
+    names = [m for m in body.split('data-live="')[1:]]
+    keys = [n.split('"', 1)[0] for n in names]
+    assert len(keys) == len(set(keys)), "every live block needs its own name"

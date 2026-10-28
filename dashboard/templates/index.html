@@ -255,6 +255,18 @@ section{position:relative;scroll-margin-top:84px;}
 }
 /* ============================================================ end nav */
 
+/* ============================================================ shared behaviour
+   Both sites. Text you read can be selected and copied, in the leaf's tint;
+   the controls you press cannot, so a double tap or a slide never paints
+   them blue. Links keep the hand cursor after nav.js moves their address to
+   data-href (no address bubble in the corner of the window). */
+::selection { background: rgba(63, 94, 57, .24); }
+.foot ::selection, .film-ui ::selection { background: rgba(195, 220, 156, .32); }
+.nav, .sheet nav, button, .btn, [role="link"], [role="button"], [role="slider"], .chips, .pin, .swatches,
+.part-btn, .acc-btn, .group-btn, .hero-now, .live, .now-live, .pv { -webkit-user-select: none; user-select: none; }
+a[data-href] { cursor: pointer; }
+a, button, [role="link"], [role="button"], [role="slider"] { -webkit-tap-highlight-color: transparent; }
+
 /* odds band: the instrument, a shade darker than the page, inked like a printed chart */
 .odds{background:var(--paper-2);color:var(--ink);padding-top:calc(118px + env(safe-area-inset-top,0px));padding-bottom:clamp(56px,7vw,96px);}
 .odds h1{font-size:clamp(46px,8vw,120px);line-height:.88;}
@@ -512,6 +524,10 @@ body.ag-in .only-out{display:none;}
 .foot-row a{text-decoration:none;}
 .wordmark{font:400 clamp(90px,26vw,400px)/.8 var(--display);letter-spacing:-.045em;margin:36px 0 -.12em;white-space:nowrap;text-align:center;padding:0 .06em;background:linear-gradient(180deg,var(--on-night) 30%,rgba(241,239,231,.22));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
 @media (min-width:900px){.foot-row{grid-template-columns:1fr auto 1fr;align-items:center;}.foot-row p:last-child{text-align:right;}}
+/* what is running: the box, the Pi, the model. Read from the readings and the checkout, never typed in. */
+.foot-ver{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:22px;padding-top:16px;border-top:1px solid rgba(241,239,231,.12);font:500 11px/1.5 var(--mono);letter-spacing:.04em;color:var(--on-night-2);}
+.foot-ver i{font-style:normal;opacity:.62;margin-right:4px;}
+.chip-slot{display:contents;}
 
 /* request dialog */
 /* request dialog: the same motion as sign-in, a dialog scaling in on a laptop
@@ -616,6 +632,7 @@ body.ag-in .only-out{display:none;}
       <a href="#odds">Odds</a><a href="#field">Field</a><a href="#season">Season</a><a href="#orbit">Orbit</a><a href="#checks">Checks</a><a href="#camera">Camera</a><a href="#record">Record</a>
     </nav>
     <div class="nav-right">
+      <span class="chip-slot" data-live="chip">
       {%- if latest and latest.online %}
       <span class="live on" id="live-chip"><span class="dot"></span><span class="lt">Live · </span><span id="live-t">{{ latest.observed_at.split(', ')[-1] if latest.observed_at else '' }}</span></span>
       {%- elif latest and latest.receiving and latest.incoming_flagged %}
@@ -625,6 +642,7 @@ body.ag-in .only-out{display:none;}
       {%- else %}
       <span class="live" id="live-chip"><span class="dot"></span><span class="lt">Waiting for the first reading</span></span>
       {%- endif %}
+      </span>
       <div class="auth" data-ag-auth></div>
       <button class="menu-btn" id="menu-open" type="button" aria-expanded="false" aria-controls="menu" aria-label="Open the menu"><svg><use href="#i-menu"/></svg></button>
     </div>
@@ -651,11 +669,11 @@ body.ag-in .only-out{display:none;}
 <!-- ================================================================ odds -->
 <section class="odds" id="odds" aria-labelledby="odds-h">
   <div class="wrap">
-    <p class="eyebrow">Phytoplex, {{ site.name }}{% if odds.available %} · updated {{ odds.updated }}{% if odds.stale %} (overdue){% endif %}{% endif %}</p>
+    <p class="eyebrow" data-live="odds-eyebrow">Phytoplex, {{ site.name }}{% if odds.available %} · updated {{ odds.updated }}{% if odds.stale %} (overdue){% endif %}{% endif %}</p>
     <h1 id="odds-h" style="margin-top:14px"><span class="caps">Today's</span> <span class="ital">odds.</span></h1>
     {% if odds.available %}
     {% set o = odds.now %}
-    <div class="odds-grid">
+    <div class="odds-grid" data-live="odds-grid">
       <div>
         <p class="o-label">Chance of a new infection, next 24 hours</p>
         <p class="o-big num" id="o-big"><span id="o-p">{{ (o.p * 100)|round|int }}</span><span class="pct">%</span></p>
@@ -703,13 +721,13 @@ body.ag-in .only-out{display:none;}
       <div class="cv"><canvas id="c-odds" aria-label="Cumulative odds of infection over the next 72 hours"></canvas></div>
     </div>
 
-    <div class="caveat">
+    <div class="caveat" data-live="caveat">
       <p><b>Not yet checked against this field.</b> {{ odds.calibration.visits or 0 }} field walk{{ '' if odds.calibration.visits == 1 else 's' }} logged; it is called checked after 20, with 3 outbreaks among them. Until then it is uncalibrated: lab and trial numbers set it.</p>
       <p><b>A reason to look,</b> not a prediction you can spray by. {{ odds.inputs.members }} weather runs × {{ (odds.inputs.worlds // (odds.inputs.members or 1)) }} sets of uncertain biology make the range.</p>
       <p><b>Leaf wetness is computed</b> from the weather until the sensor is fitted. <a href="https://agrisync.tech/#how">How this is calculated →</a></p>
     </div>
     {% else %}
-    <div class="empty-n"><b>The odds have not run yet.</b>They need 72 hours of weather and a forecast; the feed job runs them every hour. Meanwhile the readings below are live. This is not a prediction service: the scores stay uncalibrated until the field log checks them. <a href="https://agrisync.tech/#how" style="color:var(--leaf)">How this is calculated →</a></div>
+    <div class="empty-n" data-live="odds-empty"><b>The odds have not run yet.</b>They need 72 hours of weather and a forecast; the feed job runs them every hour. Meanwhile the readings below are live. This is not a prediction service: the scores stay uncalibrated until the field log checks them. <a href="https://agrisync.tech/#how" style="color:var(--leaf)">How this is calculated →</a></div>
     {% endif %}
   </div>
 </section>
@@ -722,7 +740,7 @@ body.ag-in .only-out{display:none;}
         <p class="eyebrow">Phytoplex, right now</p>
         <h2 id="now-h"><span class="caps">In the leaves,</span> <span class="ital">right now.</span></h2>
       </div>
-      {% if latest %}<p class="now-live{{ ' on' if latest.online }}" id="now-live"><span class="dot" aria-hidden="true"></span><span>Read at <b id="now-at">{{ latest.observed_at.split(', ')[-1] if latest.observed_at else '' }}</b></span><span class="sep" aria-hidden="true"></span><span id="now-age">{{ latest.age_minutes|round|int }} min ago</span></p>{% endif %}
+      {% if latest %}<p class="now-live{{ ' on' if latest.online }}" id="now-live" data-live="now-live"><span class="dot" aria-hidden="true"></span><span>Read at <b id="now-at">{{ latest.observed_at.split(', ')[-1] if latest.observed_at else '' }}</b></span><span class="sep" aria-hidden="true"></span><span id="now-age">{{ latest.age_minutes|round|int }} min ago</span></p>{% endif %}
     </div>
     <p class="now-hint" id="now-hint">Slide along any line to read the hour. All four follow.</p>
     <div class="tiles">
@@ -753,7 +771,7 @@ body.ag-in .only-out{display:none;}
     <div class="sec-head">
       <p class="eyebrow">The field</p>
       <h2 id="field-h"><span class="caps">The last</span> <span class="ital">{% if hours < 48 %}{{ hours }} hours{% elif hours >= 8760 %}everything{% else %}{{ (hours/24)|round|int }} days{% endif %}.</span></h2>
-      <p class="lede">{{ "{:,}".format(stats.readings or 0) }} reading{{ '' if stats.readings == 1 else 's' }}{% if stats.coverage_pct %} · {{ stats.coverage_pct }}% of the hours covered{% endif %}</p>
+      <p class="lede" data-live="field-lede">{{ "{:,}".format(stats.readings or 0) }} reading{{ '' if stats.readings == 1 else 's' }}{% if stats.coverage_pct %} · {{ stats.coverage_pct }}% of the hours covered{% endif %}</p>
     </div>
     <div class="chips">
       {%- for r in ranges %}
@@ -770,7 +788,7 @@ body.ag-in .only-out{display:none;}
       <div class="panel card"><div class="ph"><span class="tag">Relative humidity</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Humidity</span></span></div><div class="cv"><canvas id="c-hum"></canvas></div></div>
     </div>
     {% if stats.temp_min is not none %}
-    <div class="facts">
+    <div class="facts" data-live="field-facts">
       <div class="card"><span class="v num">{{ stats.temp_min }}<small> °C</small></span><span class="k">Coldest</span></div>
       <div class="card"><span class="v num">{{ stats.temp_max }}<small> °C</small></span><span class="k">Warmest</span></div>
       <div class="card"><span class="v num">{{ stats.humidity_mean }}<small> %</small></span><span class="k">Mean humidity</span></div>
@@ -794,7 +812,7 @@ body.ag-in .only-out{display:none;}
       <div class="season-strip" id="season-strip" role="img" aria-label="Daily odds of infection since 11 August"></div>
       <p class="season-note">Hours Phytoplex could not send are filled from regional weather, corrected to this field.</p>
     </div>
-    {% if odds.context.season_rank_pct is not none %}<p class="note">The next 24 hours rank above {{ odds.context.season_rank_pct }}% of the season's days so far.{% if odds.context.climate %} Against the same fortnight in {{ odds.context.climate.years }} past seasons: above {{ odds.context.climate.pct }}%.{% endif %}</p>{% endif %}
+    <div data-live="season-rank">{% if odds.context.season_rank_pct is not none %}<p class="note">The next 24 hours rank above {{ odds.context.season_rank_pct }}% of the season's days so far.{% if odds.context.climate %} Against the same fortnight in {{ odds.context.climate.years }} past seasons: above {{ odds.context.climate.pct }}%.{% endif %}</p>{% endif %}</div>
     {% else %}
     <div class="empty"><b>Nothing to show yet.</b>The season chart appears once the odds have run.</div>
     {% endif %}
@@ -816,7 +834,7 @@ body.ag-in .only-out{display:none;}
       <div class="panel card"><div class="ph"><span class="tag">Radar · Sentinel-1 RVI</span><span class="legend"><span><i class="pt" style="--c:var(--leaf)"></i>Morning</span><span><i class="pt" style="--c:var(--mid)"></i>Evening</span><span><i class="ln" style="--c:var(--ink)"></i>Median of five</span></span></div>
         {% if radar.available %}<div class="cv"><canvas id="c-rvi"></canvas></div>{% else %}<p class="note">No radar passes processed yet.</p>{% endif %}</div>
     </div>
-    <div class="facts">
+    <div class="facts" data-live="orbit-facts">
       <div class="card"><span class="v num">{{ '%.2f'|format(sat.latest.ndvi) if sat.available else '—' }}</span><span class="k">{{ 'NDVI, ' ~ sat.latest.date if sat.available else 'No clear pass yet' }}</span></div>
       <div class="card"><span class="v num">{{ sat['clear'] or 0 }}<small> of {{ sat['passes'] or 0 }}</small></span><span class="k">Clear optical passes</span></div>
       <div class="card"><span class="v num">{{ radar.passes if radar.available else 0 }}</span><span class="k">Radar passes, cloud or not</span></div>
@@ -826,7 +844,7 @@ body.ag-in .only-out{display:none;}
     <div class="empty"><b>No satellite passes processed yet.</b>They are read once a day.</div>
     {% endif %}
     {% if check.available %}{% set w = check.weather %}{% set s = check.since %}
-    <div class="dos card">
+    <div class="dos card" data-live="dos">
       <div class="dos-head"><h3>Disease, or just stress?</h3><span class="state {{ check.tone }}">{{ check.tag }}</span></div>
       <p>{{ check.text }}</p>
       {% if check.canopy and w %}
@@ -849,7 +867,7 @@ body.ag-in .only-out{display:none;}
       <p class="eyebrow">How sure it is</p>
       <h2 id="checks-h"><span class="caps">The numbers,</span> <span class="ital">checked.</span></h2>
     </div>
-    <div class="checks">
+    <div class="checks" data-live="checks">
       <article class="check card">
         {% if skill and skill.dew_raw is not none %}
         <p class="fig num">{{ '%.1f'|format(skill.dew_raw) }}<span class="to">→</span>{{ '%.1f'|format(skill.dew_cor) }}<small>°C</small></p>
@@ -894,18 +912,18 @@ body.ag-in .only-out{display:none;}
       <div class="panel card"><div class="ph"><span class="tag">Daily mean humidity</span><span class="legend"><span><i class="ln" style="--c:var(--leaf)"></i>Phytoplex</span><span><i class="dash" style="--c:var(--mid)"></i>ERA5-Land</span></span></div><div class="cv"><canvas id="c-cmp-h"></canvas></div></div>
     </div>
     {% set t = compare.stats.temp %}{% set h = compare.stats.rh %}
-    <div class="facts">
+    <div class="facts" data-live="cmp-facts">
       <div class="card"><span class="v num">{{ '%+.1f'|format(t.bias) if t else '—' }}<small> °C</small></span><span class="k">Temperature, Phytoplex minus ERA5{% if t and t.r is not none %} · r {{ '%.2f'|format(t.r) }}{% endif %}</span></div>
       <div class="card"><span class="v num">{{ '%+.1f'|format(h.bias) if h else '—' }}<small> pts</small></span><span class="k">Humidity, Phytoplex minus ERA5{% if h and h.r is not none %} · r {{ '%.2f'|format(h.r) }}{% endif %}</span></div>
       <div class="card"><span class="v num">{{ (compare.rain.total|round|int) if compare.rain else '—' }}<small> mm</small></span><span class="k">{% if compare.rain %}Rain, ERA5, {{ compare.rain.wet_days }} days over 1 mm{% else %}Rain, not yet run{% endif %}</span></div>
       <div class="card"><span class="v num">{{ '%.1f'|format(compare.sun) if compare.sun else '—' }}<small> kWh/m²</small></span><span class="k">Daily sunlight, NASA POWER</span></div>
     </div>
-    <p class="note">The reanalysis runs about five days behind and reaches {{ compare.era5_until }}.{% if compare.modelled_days %} On {{ compare.modelled_days }} day{{ '' if compare.modelled_days == 1 else 's' }} Phytoplex logged under 12 good hours, so those days show the reanalysis alone.{% endif %} Rain and sunlight are model and satellite estimates: Phytoplex has a wet-or-dry plate, not a gauge.</p>
+    <p class="note" data-live="cmp-note">The reanalysis runs about five days behind and reaches {{ compare.era5_until }}.{% if compare.modelled_days %} On {{ compare.modelled_days }} day{{ '' if compare.modelled_days == 1 else 's' }} Phytoplex logged under 12 good hours, so those days show the reanalysis alone.{% endif %} Rain and sunlight are model and satellite estimates: Phytoplex has a wet-or-dry plate, not a gauge, and that plate has read wet since 27 September. It is replaced after the season.</p>
     {% else %}
     <div class="empty"><b>The comparison has not run yet.</b>It is rebuilt once a day.</div>
     {% endif %}
     {% if feeds %}
-    <div class="feeds" aria-label="Outside feeds">
+    <div class="feeds" aria-label="Outside feeds" data-live="feeds">
       {%- for name, f in feeds.items() %}
       <span class="{{ 'fail' if f.failing else ('late' if f.hours_since_ok is none or f.hours_since_ok > 30 else '') }}">{{ name }}{% if f.hours_since_ok is not none %} · {{ f.hours_since_ok|round|int }} h{% endif %}</span>
       {%- endfor %}
@@ -927,7 +945,7 @@ body.ag-in .only-out{display:none;}
         <div class="img-grid only-out">{%- for _ in range(8) %}<div class="img-cell"></div>{%- endfor %}</div>
         <a class="door" href="{{ links.photos }}" data-ag-request="photos">
           <span class="ic"><svg><use href="#i-img"/></svg></span>
-          <span><b>See the canopy photographs</b><span>{% if photo_total %}{{ "{:,}".format(photo_total) }} photos so far. {% endif %}Newest first; open any one full size.</span></span>
+          <span><b>See the canopy photographs</b><span data-live="photos">{% if photo_total %}{{ "{:,}".format(photo_total) }} photos so far. {% endif %}Newest first; open any one full size.</span></span>
           <span class="arr" aria-hidden="true">→</span>
         </a>
       </div>
@@ -949,7 +967,7 @@ body.ag-in .only-out{display:none;}
     <div class="sec-head">
       <p class="eyebrow">The record</p>
       <h2 id="record-h"><span class="caps">Every reading,</span> <span class="ital">as it landed.</span></h2>
-      <p class="lede">{% if member and span.available %}{{ "{:,}".format(span.readings) }} readings since {{ span.since }}.{% else %}One row every five minutes, straight from Phytoplex.{% endif %}</p>
+      <p class="lede" data-live="record-lede">{% if member and span.available %}{{ "{:,}".format(span.readings) }} readings since {{ span.since }}.{% else %}One row every five minutes, straight from Phytoplex.{% endif %}</p>
     </div>
     <div class="lockable card">
       <div class="lock-body">
@@ -1011,9 +1029,34 @@ body.ag-in .only-out{display:none;}
       <nav aria-label="Footer"><a href="https://agrisync.tech">agrisync.tech</a><a href="https://agrisync.tech/#how">How it works</a><a href="https://www.linkedin.com/in/nikhil-siddhu-411406366" rel="noopener">LinkedIn</a><a href="https://x.com/nikhilsiddhu_" rel="noopener">X</a></nav>
       <p>© 2026 AgriSync</p>
     </div>
+    {%- set v = versions or {} %}
+    <p class="foot-ver" data-live="versions">
+      <span><i>Phytoplex firmware</i> {{ v.firmware or '—' }}</span>
+      {% if v.next_firmware and v.next_firmware != v.firmware %}<span><i>Next</i> {{ v.next_firmware }}, after the season</span>{% endif %}
+      <span><i>Pi software</i> {{ v.release or '—' }}{% if v.commit %} · {{ v.commit }}{% endif %}</span>
+      <span><i>Odds engine</i> {{ v.odds_engine or '—' }}</span>
+    </p>
     <p class="wordmark" aria-hidden="true">AgriSync</p>
   </div>
 </footer>
+
+<!-- ================================================================ data
+     The numbers behind every chart, as JSON. The charts read them once, and
+     the live refresh (end of page) swaps them in when the Pi has new ones. -->
+<script type="application/json" id="d-spark">{{ (spark or {})|tojson }}</script>
+<script type="application/json" id="d-odds">{{ (odds.chart if odds.available else None)|tojson }}</script>
+<script type="application/json" id="d-series">{{ series|tojson }}</script>
+<script type="application/json" id="d-sat">{{ (sat.chart if sat.available else None)|tojson }}</script>
+<script type="application/json" id="d-radar">{{ (radar.chart if radar.available else None)|tojson }}</script>
+<script type="application/json" id="d-compare">{{ (compare.chart if compare.available else None)|tojson }}</script>
+<script type="application/json" id="d-season">{{ (odds.season if odds.available else None)|tojson }}</script>
+<script>
+  window.AGData = function (k) {
+    var el = document.getElementById('d-' + k);
+    try { return el ? JSON.parse(el.textContent) : null; } catch (e) { return null; }
+  };
+  window.AGLive = window.AGLive || {};   // k -> function (new data), filled by each chart below
+</script>
 
 <!-- ================================================================ dialogs -->
 <div class="rq-back" id="rqBack" aria-hidden="true" role="dialog" aria-modal="true">
@@ -1111,15 +1154,87 @@ body.ag-in .only-out{display:none;}
   }
   window.AGNav = { isOpen: isOpen, close: function () { set(false); } };
 
+  // Links without the address bubble. While the pointer is over a link, the
+  // browser shows its address in a corner of the window; these pages do not
+  // want that. So once the page has loaded, every link keeps its address in
+  // data-href instead of href, and a click, Enter, or a middle, Cmd or Ctrl
+  // click does what the link would have done. The page source keeps the real
+  // href for search engines and anyone without script. Left alone: downloads,
+  // mail and phone links, and anything marked data-keep-href.
+  function ref(a) { return a.getAttribute('data-href') || a.getAttribute('href') || ''; }
+  function quiet(a) {
+    if (a.hasAttribute('data-href') || a.hasAttribute('data-keep-href') || a.hasAttribute('download')) return;
+    var href = a.getAttribute('href');
+    if (!href || /^(mailto:|tel:|javascript:)/i.test(href)) return;
+    a.setAttribute('data-href', href);
+    a.removeAttribute('href');
+    if (!a.hasAttribute('role')) a.setAttribute('role', 'link');
+    if (!a.hasAttribute('tabindex')) a.setAttribute('tabindex', '0');
+  }
+  function quietAll(root) {
+    if (root.nodeType !== 1) return;
+    if (root.matches && root.matches('a[href]')) quiet(root);
+    if (root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll('a[href]'), quiet);
+  }
+  function follow(a, e, byKey) {
+    var href = a.getAttribute('data-href');
+    var newTab = !!(e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1);
+    if (href.charAt(0) === '#' && !newTab) {
+      var t = href.length > 1 ? document.getElementById(href.slice(1)) : null;
+      if (history.pushState) history.pushState(null, '', href); else location.hash = href;
+      if (t) {
+        t.scrollIntoView({ block: 'start' });         // smooth, or not, as the page's scroll-behavior says
+        if (byKey) {                                   // a keyboard jump moves focus there too, as a real link does
+          if (!t.hasAttribute('tabindex')) t.setAttribute('tabindex', '-1');
+          t.focus({ preventScroll: true });
+        }
+      } else window.scrollTo(0, 0);
+      return;
+    }
+    var url = new URL(href, location.href).href;
+    if (newTab) window.open(url, '_blank', 'noopener');
+    else location.assign(url);
+  }
+  quietAll(document.body);
+  if ('MutationObserver' in window) {
+    new MutationObserver(function (ms) {
+      ms.forEach(function (m) { Array.prototype.forEach.call(m.addedNodes, quietAll); });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+  // On window, so every other handler (sign-in, requests) has had its say and
+  // can still cancel the jump with preventDefault.
+  var byKey = false;
+  window.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('a[data-href]');
+    if (!a || e.defaultPrevented || e.button !== 0) return;
+    e.preventDefault();
+    follow(a, e, byKey);
+  });
+  window.addEventListener('auxclick', function (e) {
+    var a = e.target.closest && e.target.closest('a[data-href]');
+    if (!a || e.defaultPrevented || e.button !== 1) return;
+    e.preventDefault();
+    follow(a, e, false);
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || e.defaultPrevented) return;
+    var a = e.target.closest && e.target.closest('a[data-href]');
+    if (!a || a !== e.target) return;
+    e.preventDefault();
+    byKey = true;                                    // other handlers see it as the click it is
+    try { a.click(); } finally { byKey = false; }
+  });
+
   // The section crossing the middle of the screen marks its link current,
   // in the bar and in the phone menu; a section with no link clears it.
-  var links = Array.prototype.slice.call(document.querySelectorAll('.nav .links a[href^="#"], #menu nav a[href^="#"]'));
+  var links = Array.prototype.slice.call(document.querySelectorAll(
+    '.nav .links a[href^="#"], .nav .links a[data-href^="#"], #menu nav a[href^="#"], #menu nav a[data-href^="#"]'));
   if (!links.length || !('IntersectionObserver' in window)) return;
   var io = new IntersectionObserver(function (entries) {
     entries.forEach(function (x) {
       if (!x.isIntersecting) return;
       links.forEach(function (a) {
-        if (a.getAttribute('href') === '#' + x.target.id) a.setAttribute('aria-current', 'true');
+        if (ref(a) === '#' + x.target.id) a.setAttribute('aria-current', 'true');
         else a.removeAttribute('aria-current');
       });
     });
@@ -1237,7 +1352,7 @@ body.ag-in .only-out{display:none;}
      ring. Wetness is one bar an hour, solid when the leaf counted as wet.
      Sliding along any tile (pointer, finger or arrow keys) shows that hour
      in all four tiles; letting go returns them to now. */
-  var SP = {{ (spark or {})|tojson }};
+  var SP = window.AGData('spark') || {};
   var WET = 50, H = 64, PAD = 6, GAP_MS = 90 * 60e3;
   var tiles = document.querySelector('.tiles');
   if (!tiles) return;
@@ -1400,6 +1515,15 @@ body.ag-in .only-out{display:none;}
   // The minute refresh (below) updates the numbers through this, so a slide
   // in progress is not overwritten and letting go shows the fresh value.
   window.AGNow = { set: function (k, txt) { live[k] = txt; if (at === null) { var tile = tiles.querySelector('.tile[data-k="' + k + '"]'); if (tile) setV(tile, txt); } } };
+  // New readings move the lines too (every minute, from /data.json).
+  function keyOf(v) { return JSON.stringify([v.t, v.air, v.humidity, v.dew, v.wetness]) + Math.floor((v.now || 0) / 300e3); }
+  var sparkKey = SP && SP.t ? keyOf(SP) : '';
+  window.AGLive.spark = function (v) {
+    if (!v || !v.t) return;
+    var key = keyOf(v);
+    if (key === sparkKey) return;
+    sparkKey = key; SP = v; draw();
+  };
 })();
 </script>
 <script>
@@ -1520,11 +1644,12 @@ body.ag-in .only-out{display:none;}
   var day = function(v){ var d = new Date(v + 19800000); return d.getUTCDate() + ' ' + MON[d.getUTCMonth()]; };
 
   /* the next 72 hours */
-  var OD = {{ (odds.chart if odds.available else None)|tojson }};
+  var OD = window.AGData('odds');
   var el = document.getElementById('c-odds');
+  var pc = function (a) { return (a || []).map(function (v) { return Math.round(v * 1000) / 10; }); };
   if (el && OD && OD.p.length) {
     var on = C('--ink-3');
-    new Chart(el, {data:{labels:OD.labels, datasets:[
+    var chOdds = new Chart(el, {data:{labels:OD.labels, datasets:[
       {type:'line', label:'Odds so far', data:OD.p.map(function(v){return Math.round(v*1000)/10;}), borderColor:C('--ink'), yAxisID:'y', order:1},
       {type:'line', label:'Range high', data:OD.hi.map(function(v){return Math.round(v*1000)/10;}), borderColor:'rgba(0,0,0,0)', backgroundColor:'rgba(63,94,57,.16)', fill:'+1', yAxisID:'y', order:2},
       {type:'line', label:'Range low', data:OD.lo.map(function(v){return Math.round(v*1000)/10;}), borderColor:'rgba(0,0,0,0)', fill:false, yAxisID:'y', order:3},
@@ -1538,16 +1663,30 @@ body.ag-in .only-out{display:none;}
       scales:{x:{grid:{display:false}, ticks:{color:on, maxTicksLimit:narrow ? 4 : 7, maxRotation:0, autoSkip:true}},
               y:{min:0, suggestedMax:50, grid:{color:'rgba(14,27,18,.08)'}, border:{display:false}, ticks:{color:on, callback:function(v){return v+'%';}, maxTicksLimit:5}},
               w:{display:false, min:0, max:260}}}});
+    window.AGLive.odds = function (v) {
+      if (!v || !v.p) return;
+      var d = chOdds.data.datasets;
+      chOdds.data.labels = v.labels;
+      d[0].data = pc(v.p); d[1].data = pc(v.hi); d[2].data = pc(v.lo);
+      d[3].data = (v.wet || []).map(function (x) { return Math.round((x || 0) * 100); });
+      chOdds.update('none');
+    };
   }
 
   /* the field */
-  var S = {{ series|tojson }};
+  var S = window.AGData('series');
   if (S && S.labels && S.labels.length) {
-    new Chart(document.getElementById('c-temp'), {type:'line', data:{labels:S.labels, datasets:[
+    var chTemp = new Chart(document.getElementById('c-temp'), {type:'line', data:{labels:S.labels, datasets:[
       {label:'Air', unit:' °C', data:S.air, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start'},
       {label:'Dew point', unit:' °C', data:S.dew, borderColor:C('--mid'), borderDash:[5,4], fill:false}]}, options:base});
-    new Chart(document.getElementById('c-hum'), {type:'line', data:{labels:S.labels, datasets:[
+    var chHum = new Chart(document.getElementById('c-hum'), {type:'line', data:{labels:S.labels, datasets:[
       {label:'Humidity', unit:'%', dp:0, data:S.humidity, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:true}]}, options:withY({min:0, max:100})});
+    window.AGLive.series = function (v) {
+      if (!v || !v.labels) return;
+      chTemp.data.labels = v.labels; chTemp.data.datasets[0].data = v.air; chTemp.data.datasets[1].data = v.dew;
+      chHum.data.labels = v.labels; chHum.data.datasets[0].data = v.humidity;
+      chTemp.update('none'); chHum.update('none');
+    };
   }
 
   /* orbit */
@@ -1557,35 +1696,52 @@ body.ag-in .only-out{display:none;}
       scales:{x:{type:'linear', min:range[0], max:range[1], grid:{display:false}, ticks:{stepSize:14*86400000, autoSkip:true, maxRotation:0, callback:function(v){ return day(v); }}},
               y:Object.assign({}, base.scales.y, {min:0, max:1})}});
   }
-  var SAT = {{ (sat.chart if sat.available else None)|tojson }};
-  var RAD = {{ (radar.chart if radar.available else None)|tojson }};
-  var CMP = {{ (compare.chart if compare.available else None)|tojson }};
+  var SAT = window.AGData('sat');
+  var RAD = window.AGData('radar');
+  var CMP = window.AGData('compare');
+  // A new pass also moves the axis: the range is part of the data.
+  function setRange(ch, r) { if (r && ch.options.scales.x) { ch.options.scales.x.min = r[0]; ch.options.scales.x.max = r[1]; } }
   el = document.getElementById('c-ndvi');
   if (el && SAT && SAT.points.length) {
-    new Chart(el, {type:'line', data:{datasets:[{label:'NDVI, clear passes', data:SAT.points, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')),
+    var chSat = new Chart(el, {type:'line', data:{datasets:[{label:'NDVI, clear passes', data:SAT.points, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')),
       fill:true, pointRadius:3, pointBackgroundColor:C('--leaf'), cubicInterpolationMode:'monotone'}]}, options:orbitOpts(SAT.range)});
+    window.AGLive.sat = function (v) { if (!v || !v.points) return; chSat.data.datasets[0].data = v.points; setRange(chSat, v.range); chSat.update('none'); };
   }
   el = document.getElementById('c-rvi');
   if (el && RAD) {
-    new Chart(el, {type:'line', data:{datasets:[
+    var chRad = new Chart(el, {type:'line', data:{datasets:[
       {label:'Morning pass', data:RAD.morning, showLine:false, pointRadius:3, borderColor:C('--leaf'), backgroundColor:C('--leaf')},
       {label:'Evening pass', data:RAD.evening, showLine:false, pointRadius:3, borderColor:C('--mid'), backgroundColor:C('--mid')},
       {label:'Median of five', data:RAD.trend, borderColor:C('--ink'), backgroundColor:C('--ink'), pointRadius:0, cubicInterpolationMode:'monotone'}]}, options:orbitOpts(RAD.range)});
+    window.AGLive.radar = function (v) {
+      if (!v) return;
+      var d = chRad.data.datasets; d[0].data = v.morning; d[1].data = v.evening; d[2].data = v.trend;
+      setRange(chRad, v.range); chRad.update('none');
+    };
   }
   el = document.getElementById('c-cmp-t');
   if (el && CMP && CMP.labels.length) {
-    new Chart(el, {type:'line', data:{labels:CMP.labels, datasets:[
+    var chCmpT = new Chart(el, {type:'line', data:{labels:CMP.labels, datasets:[
       {label:'Phytoplex', unit:' °C', data:CMP.field_temp, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
       {label:'ERA5-Land', unit:' °C', data:CMP.era5_temp, borderColor:C('--mid'), borderDash:[5,4]}]}, options:base});
-    new Chart(document.getElementById('c-cmp-h'), {type:'line', data:{labels:CMP.labels, datasets:[
+    var chCmpH = new Chart(document.getElementById('c-cmp-h'), {type:'line', data:{labels:CMP.labels, datasets:[
       {label:'Phytoplex', unit:'%', dp:0, data:CMP.field_rh, borderColor:C('--leaf'), backgroundColor:fade(C('--leaf')), fill:'start', spanGaps:false},
       {label:'ERA5-Land', unit:'%', dp:0, data:CMP.era5_rh, borderColor:C('--mid'), borderDash:[5,4]}]}, options:withY({min:0, max:100})});
+    window.AGLive.compare = function (v) {
+      if (!v || !v.labels) return;
+      chCmpT.data.labels = v.labels; chCmpT.data.datasets[0].data = v.field_temp; chCmpT.data.datasets[1].data = v.era5_temp;
+      chCmpH.data.labels = v.labels; chCmpH.data.datasets[0].data = v.field_rh; chCmpH.data.datasets[1].data = v.era5_rh;
+      chCmpT.update('none'); chCmpH.update('none');
+    };
   }
 
   /* keep the tiles and the live chip fresh */
   setInterval(function(){
-    fetch('/data.json?hours={{ hours }}').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    if (document.hidden || window.AG_PREVIEW) return;
+    fetch('/data.json?hours={{ hours }}', { cache: 'no-cache', credentials: 'same-origin' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
       if (!d || !d.latest) return;
+      if (d.spark && window.AGLive.spark) window.AGLive.spark(d.spark);
+      if (d.series && window.AGLive.series) window.AGLive.series(d.series);
       function set(k, id, v, dp){
         if (v === null || v === undefined) return;
         var txt = Number(v).toFixed(dp);
@@ -1602,6 +1758,10 @@ body.ag-in .only-out{display:none;}
       if (chip && d.latest.online && d.latest.observed_at) {
         chip.className = 'live on';
         if (t) t.textContent = d.latest.observed_at.split(', ').pop();
+      } else if (chip && t && !d.latest.online && d.latest.age_minutes !== null && d.latest.age_minutes !== undefined) {
+        chip.className = 'live';
+        var lt = chip.querySelector('.lt'); if (lt) lt.textContent = 'Last reading ';
+        t.textContent = Math.round(d.latest.age_minutes) + ' min ago';
       }
     }).catch(function(){});
   }, 60000);
@@ -1854,12 +2014,14 @@ body.ag-in .only-out{display:none;}
   }
 
 
-  var SE = {{ (odds.season if odds.available else None)|tojson }};
+  var SE = window.AGData('season');
+  // Each point is stamped at noon IST; its date is the day the window starts.
+  function fromPoints(v) {
+    return v.points.map(function (r) { return { d: new Date(r.x + 19800000).toISOString().slice(0, 10), p: r.p, m: r.measured }; });
+  }
+  window.AGLive.season = function (v) { if (v && v.points && v.points.length && $('season-strip')) { season = fromPoints(v); drawSeason(); } };
   if (SE && SE.points && SE.points.length) {
-    // Each point is stamped at noon IST; its date is the day the window starts.
-    season = SE.points.map(function (r) {
-      return { d: new Date(r.x + 19800000).toISOString().slice(0, 10), p: r.p, m: r.measured };
-    });
+    season = fromPoints(SE);
     drawSeason();
     var rz = null;
     window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(drawSeason, 180); }, { passive: true });
@@ -1980,6 +2142,68 @@ body.ag-in .only-out{display:none;}
   }
   document.addEventListener('click', function (e) { var t = e.target.closest && e.target.closest('[data-ag-signin]'); if (t) { e.preventDefault(); openModal(); } });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refresh); else refresh();
+})();
+</script>
+<script>
+(function () {
+  /* live refresh. Every five minutes, while the tab is in view, the page
+     fetches itself again and takes what changed: the text blocks marked
+     data-live, and the numbers behind the charts (the d-* blocks, handed to
+     window.AGLive). The tiles move every minute on their own (above).
+     Nothing changes under a reader mid-gesture: a slide along the tiles, an
+     open dialog, sheet or menu waits for the next round. If a section
+     appeared or went (the odds ran for the first time, a satellite pass
+     arrived), the page reloads the next time the tab is hidden, never in
+     front of the reader. */
+  if (window.AG_PREVIEW || !window.fetch || !window.DOMParser) return;
+  var EVERY = 5 * 60e3, last = Date.now(), busy = false, stale = false;
+  var served = {};   // each block's HTML as the server last sent it
+  function shape(doc) {
+    var a = [];
+    doc.querySelectorAll('[data-live]').forEach(function (n) { a.push(n.getAttribute('data-live')); });
+    doc.querySelectorAll('canvas[id], #season-strip').forEach(function (n) { a.push('#' + n.id); });
+    return a.join(',');
+  }
+  var mine = shape(document);
+  function engaged() {
+    return document.body.style.overflow === 'hidden' ||
+      document.querySelector('.tiles.scrub, .ag-menu.open, #menu.open') !== null;
+  }
+  function pull() {
+    if (busy || document.hidden || engaged()) return;
+    busy = true; last = Date.now();
+    fetch(location.pathname + location.search, { cache: 'no-store', credentials: 'same-origin', headers: { 'X-AG-Refresh': '1' } })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) {
+        if (!html) return;
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        if (shape(doc) !== mine) { stale = true; return; }
+        doc.querySelectorAll('[data-live]').forEach(function (n) {
+          var k = n.getAttribute('data-live'), next = n.innerHTML;
+          var here = document.querySelector('[data-live="' + k + '"]');
+          if (!here) return;
+          // First round: the page's own copy has been touched by scripts
+          // (links, reveals), so compare the words; after that, the markup.
+          var same = served[k] === undefined ? here.textContent.replace(/\s+/g, ' ') === n.textContent.replace(/\s+/g, ' ') : served[k] === next;
+          served[k] = next;
+          if (!same) here.innerHTML = next;
+        });
+        doc.querySelectorAll('script[type="application/json"][id^="d-"]').forEach(function (n) {
+          var here = document.getElementById(n.id);
+          if (!here || here.textContent === n.textContent) return;
+          here.textContent = n.textContent;
+          var k = n.id.slice(2), fn = window.AGLive && window.AGLive[k];
+          if (fn) { try { fn(JSON.parse(n.textContent)); } catch (e) {} }
+        });
+      })
+      .catch(function () {})
+      .then(function () { busy = false; });
+  }
+  setInterval(pull, EVERY);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { if (stale) location.reload(); return; }
+    if (Date.now() - last >= EVERY) pull();
+  });
 })();
 </script>
 </body>

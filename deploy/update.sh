@@ -99,6 +99,17 @@ done
 [ "$ok_dash" = 1 ] || rollback "the dashboard did not answer within a minute."
 
 echo "API and dashboard healthy on $(git log -1 --format='%h %s')."
+# agrisync.tech reads this one URL for its live numbers and the versions strip.
+if curl -fsS -m 8 http://127.0.0.1:8080/summary.json -o /tmp/agrisync-summary.json 2>/dev/null; then
+  .venv/bin/python - <<'PY' || true
+import json
+v = json.load(open("/tmp/agrisync-summary.json")).get("versions") or {}
+print("Running: Phytoplex firmware %s, Pi software %s (%s), odds engine %s."
+      % (v.get("firmware") or "unknown", v.get("release"), v.get("commit") or "no commit", v.get("odds_engine")))
+PY
+else
+  echo "Note: /summary.json did not answer, so agrisync.tech keeps showing its built-in numbers until it does."
+fi
 echo
 echo "Check from anywhere:  https://dashboard.agrisync.tech"
 echo "The box's state:      curl -s http://127.0.0.1:5000/api/v1/devices | python3 -m json.tool"

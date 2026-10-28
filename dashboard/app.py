@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from flask import Flask, jsonify, render_template, request
 
 from dashboard import data
+from src import version
 
 
 def _viewer(app):
@@ -164,6 +165,7 @@ def create_app():
         # underneath it.
         payload["member"] = member
         payload["viewer"] = who or {}
+        payload["versions"] = version.versions((payload.get("latest") or {}).get("firmware"))
         payload["is_admin"] = False
         payload["ranges"] = data.RANGES
         payload["span"] = data.span()
@@ -239,6 +241,8 @@ def create_app():
                 "hours": hours,
                 "member": member,
                 "feeds": data.feed_health(),
+                # The tiles' 24 h lines, so they move with the numbers.
+                "spark": data.spark(24),
             }
             if member:
                 out["table"] = data.table(hours)
